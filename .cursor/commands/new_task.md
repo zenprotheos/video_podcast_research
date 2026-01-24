@@ -1,0 +1,1 @@
+Create task workspace, create comprehensive UML diagrams (architecture, data flow, specs, etc.) to strategize solution BEFORE writing any code.

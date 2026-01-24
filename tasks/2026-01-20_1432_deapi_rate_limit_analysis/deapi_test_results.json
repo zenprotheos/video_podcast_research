@@ -1,0 +1,107 @@
+{
+  "test_run_timestamp": "2026-01-20T13:39:22.129393",
+  "api_key_provided": true,
+  "base_url": "https://api.deapi.ai",
+  "tests": {
+    "balance_check": {
+      "endpoint": "/api/v1/client/balance",
+      "method": "GET",
+      "status_code": 401,
+      "success": false,
+      "timestamp": "2026-01-20T13:39:23.442191",
+      "error": "HTTP 401",
+      "response_text": "{\"message\":\"Unauthenticated.\"}"
+    },
+    "invalid_request_status": {
+      "endpoint": "/api/v1/client/request-status/invalid-request-id-12345",
+      "method": "GET",
+      "status_code": 401,
+      "success": true,
+      "timestamp": "2026-01-20T13:39:24.794411",
+      "error": "Unexpected status: 401",
+      "response_text": "{\"message\":\"Unauthenticated.\"}"
+    },
+    "price_calculation": {
+      "endpoint": "/api/v1/client/vid2txt/price-calculation",
+      "method": "POST",
+      "payload": {
+        "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+        "language": "en"
+      },
+      "status_code": 401,
+      "timestamp": "2026-01-20T13:39:26.146021",
+      "success": false,
+      "error": "HTTP 401",
+      "response_text": "{\"message\":\"Unauthenticated.\"}"
+    },
+    "invalid_auth": {
+      "endpoint": "/api/v1/client/balance",
+      "method": "GET",
+      "test_type": "invalid_auth",
+      "status_code": 401,
+      "timestamp": "2026-01-20T13:39:27.837961",
+      "success": true,
+      "expected_behavior": true
+    },
+    "rate_limit_simulation": {
+      "endpoint": "/api/v1/client/vid2txt",
+      "method": "POST",
+      "test_type": "rate_limit_simulation",
+      "total_requests": 5,
+      "rate_limited_count": 0,
+      "results": [
+        {
+          "request_number": 1,
+          "status_code": 401,
+          "response_time": 0.35536861419677734,
+          "timestamp": "2026-01-20T13:39:29.195860",
+          "rate_limited": false,
+          "error": "HTTP 401",
+          "response_text": "{\"message\":\"Unauthenticated.\"}"
+        },
+        {
+          "request_number": 2,
+          "status_code": 401,
+          "response_time": 0.35389113426208496,
+          "timestamp": "2026-01-20T13:39:30.050709",
+          "rate_limited": false,
+          "error": "HTTP 401",
+          "response_text": "{\"message\":\"Unauthenticated.\"}"
+        },
+        {
+          "request_number": 3,
+          "status_code": 401,
+          "response_time": 0.3594827651977539,
+          "timestamp": "2026-01-20T13:39:30.911261",
+          "rate_limited": false,
+          "error": "HTTP 401",
+          "response_text": "{\"message\":\"Unauthenticated.\"}"
+        },
+        {
+          "request_number": 4,
+          "status_code": 401,
+          "response_time": 0.3592085838317871,
+          "timestamp": "2026-01-20T13:39:31.771137",
+          "rate_limited": false,
+          "error": "HTTP 401",
+          "response_text": "{\"message\":\"Unauthenticated.\"}"
+        },
+        {
+          "request_number": 5,
+          "status_code": 401,
+          "response_time": 0.3548157215118408,
+          "timestamp": "2026-01-20T13:39:32.626602",
+          "rate_limited": false,
+          "error": "HTTP 401",
+          "response_text": "{\"message\":\"Unauthenticated.\"}"
+        }
+      ],
+      "timestamp": "2026-01-20T13:39:32.626602"
+    }
+  },
+  "summary": {
+    "total_tests": 5,
+    "successful": 2,
+    "failed": 3
+  }
+}

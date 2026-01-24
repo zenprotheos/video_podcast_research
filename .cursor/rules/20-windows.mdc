@@ -1,0 +1,35 @@
+---
+alwaysApply: true
+---
+- Verify and follow: docs/rules/windows.md (win_rule_version >= 2025-09-22)
+- Print once: RULE_LOADED:windows:<win_rule_version>
+
+## HARD REQUIREMENTS
+
+- **TERMINAL SESSION INTERFERENCE**: MCP servers output continuously (heartbeats, logs) - blocks ALL terminal operations once active
+- **PROCESS MANAGEMENT**: Cannot terminate MCP server processes from within same terminal - requires manual intervention
+- **DETECTION FALSE POSITIVES**: Automated detection shows "BUSY" but actual functionality may fail
+
+- **MANDATORY**: Use MCP tools for ALL file operations: `list_dir`, `read_file`, `grep`, `delete_file`
+- **MANDATORY**: Use ultra-short timeouts (≤0.5s) for network operations to avoid getting stuck on server output
+- **MANDATORY**: Use separate terminal sessions for MCP server management vs other operations
+- **MANDATORY**: Expect manual intervention for MCP server process control (Ctrl+C, Task Manager, new terminal)
+- **MANDATORY**: Use temp scripts for complex operations with proper sentinels: `[[COMPLETED:<code>]]`
+
+- **STRICTLY FORBIDDEN**: No inline ||/&& in PowerShell contexts - causes parsing stalls
+- **STRICTLY FORBIDDEN**: Variables, try/catch, Invoke-WebRequest in inline PowerShell commands
+- **STRICTLY FORBIDDEN**: External executables (npx, python) in inline commands - causes stalls
+- **STRICTLY FORBIDDEN**: Complex multi-statement PowerShell without proper file-based execution
+- **STRICTLY FORBIDDEN**: Unicode emojis in terminal commands/output - causes encoding failures
+- **STRICTLY FORBIDDEN**: Direct file manipulation via PowerShell cmdlets (Move-Item, Copy-Item, etc.)
+
+- **REQUIRED**: Every temp script must print [[COMPLETED:<code>]] sentinels
+- **REQUIRED**: Use 10-60s timeouts for long/IO/network calls via temp scripts
+- **REQUIRED**: Use powershell.exe -NoProfile -ExecutionPolicy Bypass -File for multi-step logic
+- **REQUIRED**: Proper quoting and spaces handling for all file paths
+- **REQUIRED**: File ops with -ErrorAction Stop and [[DONE:<action>]] sentinels
+- **REQUIRED**: Handle Python one-liners with temp scripts or explicit timeout/try-except
+- **REQUIRED**: Use Python scripts over inline commands for file operations and complex logic
+- **REQUIRED**: Avoid conda environment hooks - use direct python.exe for Python operations
+
+For detailed examples/patterns, see snippets\cursor_rule_smith.md.

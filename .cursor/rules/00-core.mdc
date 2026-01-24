@@ -1,0 +1,124 @@
+---
+alwaysApply: true
+---
+
+TITLE: AI DEV AGENT — TASK & WORKSPACE SOP (MINIMAL)
+
+MISSION
+- Keep all work task-centric, organized, and traceable
+- Prevent root-level clutter
+- Maintain specs as the source of truth
+
+CORE RULES (ALWAYS ON)
+- All meaningful work belongs to a task workspace
+- Never work ad-hoc or directly in repo root
+- Tests never live in the repo root
+- Specs must be updated when behavior changes
+- NEVER output/write/code emojis EVER!
+
+REQUIRED PATHS (repo-root relative)
+- Date/time script: tools\workflow_utilities\date-current.ps1
+- Tasks root: tasks\
+- Specs (source of truth): docs\specs\
+- Standards documentation: docs/standards/
+- Task resume archives: docs/task_resume/
+
+TASK WORKSPACE (MANDATORY)
+- Naming: tasks\${DATE}_${TaskName}\
+- DATE: `powershell.exe -ExecutionPolicy Bypass -File tools/workflow_utilities/date-current.ps1 timestamp`
+- Example: tasks\20260120_143256_user_auth_cleanup\
+
+STANDARD TASK STRUCTURE (LOGICAL)
+- INDEX.md
+- progress_tracker_${TaskName}.md
+- specs_impact_assessment.md
+- tests\
+  - unit\
+  - e2e\
+- temp\
+- artifacts\
+
+WORKSPACE CREATION (POWERSHELL)
+- Extract DATE: `powershell.exe -ExecutionPolicy Bypass -File tools/workflow_utilities/date-current.ps1 timestamp`
+- Create task directory first
+- Create directories one-by-one only when required by file creation
+- Never pre-create empty directories
+- Each mkdir command must succeed before the next
+
+PROGRESS TRACKING (REQUIRED)
+- Each task must have a progress tracker
+- Track: overview, status, completed, open issues, next actions
+- Update as work progresses
+
+DEVELOPMENT STANDARDS (MANDATORY REFERENCE)
+- **Import Standards**: Must follow `docs/standards/import_standards.md`
+  - Module-level imports for frequently used dependencies
+  - Stdlib → third-party → local import ordering
+  - Function-level imports only for optional/heavy libraries
+- **Code Quality**: Prevention methods established in recent task workspaces
+  - Automated scoping analysis to prevent import errors
+  - Consistent error handling and logging patterns
+  - Type hints and documentation standards
+- **Session Continuity**: Use `docs/task_resume/` for complex multi-step tasks
+  - Resume tasks created for session continuity
+  - Document context for future AI agents
+  - Include full technical details and implementation phases
+
+PYTHON DEVELOPMENT GUARDRAILS (CRITICAL PREVENTION)
+- **Indentation Discipline**: Always verify indentation after control flow changes
+  - Run syntax check after modifying loops, conditionals, or try/except blocks
+  - Use consistent indentation (4 spaces) - never mix tabs/spaces
+  - Test compilation: `python -m py_compile file.py` after structural changes
+- **Variable Scope Awareness**: Prevent NameError before runtime
+  - Initialize variables at function/class start when used in loops/exceptions
+  - Check variable references after refactoring or renaming
+  - Use `if 'var' not in locals():` guards for optional variables
+- **Syntax Validation**: Mandatory programmatic checks before commits
+  - **REQUIRED**: Run AST parsing: `python -c "import ast; ast.parse(open('file.py').read())"`
+  - **REQUIRED**: Test compilation: `python -m py_compile file.py`
+  - **RECOMMENDED**: Test imports: `python -c "import file"` for module-level validation
+  - **AVAILABLE**: Advanced analysis: `python tools/workflow_utilities/indentation_checker.py file.py`
+- **Exception Handling**: Comprehensive error boundaries
+  - Wrap complex operations in try/except with specific error types
+  - Never let exceptions mask underlying issues
+  - Log actual error types, not generic "error occurred" messages
+- **MANDATORY VALIDATION PHASE**: Before marking any task complete
+  - **RUN ALL SYNTAX CHECKS** on modified Python files
+  - **VERIFY INDENTATION** using programmatic methods above
+  - **TEST IMPORTS** for all new/changed modules
+  - **DOCUMENT VALIDATION** in task progress trackers
+  - **FAIL TASK COMPLETION** if any syntax errors detected
+
+TESTING RULES (STRICT)
+- No tests in repo root
+- All tests live inside task workspace OR /tests/ directory! NEVER create test files in root directly!
+- Create tests\unit\ or tests\e2e\ only when adding test files
+- Applies to bugs, features, refactors, experiments
+
+SPECS (SOURCE OF TRUTH)
+- Location: docs\specs\
+- Specs define expected behavior and structure
+- Behavior/data/flow changes require:
+  - Spec updates in docs\specs\
+  - Entry in specs_impact_assessment.md
+
+PROHIBITIONS
+- No root-level tests
+- No undocumented behavior changes
+- No orphan work outside task folders
+- No empty directories created without files
+- Never use emojis in code, not even debug logs. They cause errors for AI agents currently.
+
+DEFAULT ASSUMPTIONS
+- If unsure, create a task
+- If behavior changes, update specs
+- If tests are written, create only the required test directories
+- Prefer clarity and structure over speed
+
+INTEGRATED STANDARDS
+- Import standards enforced across all Python development
+- Code quality infrastructure available for all tasks
+- Prevention methods documented and reusable
+- Session continuity maintained through resume task system
+
+END OF SOP

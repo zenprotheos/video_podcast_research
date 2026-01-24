@@ -1,0 +1,36 @@
+{
+  "test_metadata": {
+    "timestamp": "2026-01-20T19:23:13.353275",
+    "method": "http_headers",
+    "extractor_version": "1.0.0"
+  },
+  "overall_stats": {
+    "total_urls": 2,
+    "successful_extractions": 0,
+    "failed_extractions": 2,
+    "average_extraction_time": 4.5,
+    "total_characters_extracted": 0
+  },
+  "individual_results": [
+    {
+      "url": "https://www.youtube.com/watch?v=RE_NqKDKmqM",
+      "video_id": "RE_NqKDKmqM",
+      "language": "en",
+      "success": false,
+      "extraction_time": 2.53,
+      "error_message": "Extraction returned None",
+      "transcript_info": null,
+      "performance_metrics": {}
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=huVuqgZdlLM",
+      "video_id": "huVuqgZdlLM",
+      "language": "en",
+      "success": false,
+      "extraction_time": 1.97,
+      "error_message": "Extraction returned None",
+      "transcript_info": null,
+      "performance_metrics": {}
+    }
+  ]
+}

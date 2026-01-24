@@ -1,0 +1,107 @@
+{
+    "CapturedAt":  {
+                       "value":  "\/Date(1757990341415)\/",
+                       "DisplayHint":  2,
+                       "DateTime":  "Tuesday, September 16, 2025 12:39:01 PM"
+                   },
+    "Machine":  "LAPTOP-8E1LIOHG",
+    "User":  "CSJin",
+    "Entries":  [
+                    {
+                        "ProcessName":  "powershell",
+                        "Id":  7716,
+                        "StartTime":  "\/Date(1757990137773)\/",
+                        "TreeSig":  "powershell.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "powershell",
+                        "Id":  15148,
+                        "StartTime":  "\/Date(1757990138864)\/",
+                        "TreeSig":  "powershell.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "powershell",
+                        "Id":  42904,
+                        "StartTime":  "\/Date(1757990149171)\/",
+                        "TreeSig":  "powershell.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "powershell",
+                        "Id":  235900,
+                        "StartTime":  "\/Date(1757990300246)\/",
+                        "TreeSig":  "powershell.exe \u003e powershell.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "powershell",
+                        "Id":  236584,
+                        "StartTime":  "\/Date(1757990198675)\/",
+                        "TreeSig":  "powershell.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "conhost",
+                        "Id":  5552,
+                        "StartTime":  "\/Date(1757990137513)\/",
+                        "TreeSig":  "conhost.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "conhost",
+                        "Id":  6772,
+                        "StartTime":  "\/Date(1757990152122)\/",
+                        "TreeSig":  "conhost.exe \u003e node.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "conhost",
+                        "Id":  14156,
+                        "StartTime":  "\/Date(1757990138681)\/",
+                        "TreeSig":  "conhost.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "conhost",
+                        "Id":  20180,
+                        "StartTime":  "\/Date(1757990144009)\/",
+                        "TreeSig":  "conhost.exe \u003e node.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "conhost",
+                        "Id":  21572,
+                        "StartTime":  "\/Date(1757988945345)\/",
+                        "TreeSig":  "conhost.exe \u003e S11Search64.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "conhost",
+                        "Id":  21980,
+                        "StartTime":  "\/Date(1757988945366)\/",
+                        "TreeSig":  "conhost.exe \u003e S11Search64.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "conhost",
+                        "Id":  23112,
+                        "StartTime":  "\/Date(1757990148580)\/",
+                        "TreeSig":  "conhost.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "conhost",
+                        "Id":  24004,
+                        "StartTime":  "\/Date(1757988945746)\/",
+                        "TreeSig":  "conhost.exe \u003e S11Search64.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "conhost",
+                        "Id":  32152,
+                        "StartTime":  "\/Date(1757937939962)\/",
+                        "TreeSig":  "conhost.exe \u003e ArmouryCrate.UserSessionHelper.exe \u003e ArmouryCrate.Service.exe \u003e services.exe \u003e wininit.exe"
+                    },
+                    {
+                        "ProcessName":  "conhost",
+                        "Id":  229820,
+                        "StartTime":  "\/Date(1757990143264)\/",
+                        "TreeSig":  "conhost.exe \u003e codex.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    },
+                    {
+                        "ProcessName":  "conhost",
+                        "Id":  236988,
+                        "StartTime":  "\/Date(1757990198443)\/",
+                        "TreeSig":  "conhost.exe \u003e Cursor.exe \u003e Cursor.exe \u003e explorer.exe"
+                    }
+                ]
+}
