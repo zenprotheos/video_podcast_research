@@ -16,6 +16,98 @@ import streamlit as st
 from dotenv import load_dotenv
 
 
+def process_single_video_parallel(
+    youtube_url: str,
+    video_id: str,
+    title: str,
+    row: dict,
+    session_youtube_dir: str,
+) -> dict:
+    """
+    Process a single video for parallel execution.
+    
+    This function runs in a worker thread and should NOT call any Streamlit commands.
+    Returns a dict with all results needed for UI updates.
+    """
+    import time
+    from src.bulk_transcribe.youtube_metadata import fetch_youtube_metadata, save_metadata_json
+    from src.bulk_transcribe.transcript_writer import write_transcript_markdown, generate_filename
+    from src.bulk_transcribe.utils import slugify
+    from src.bulk_transcribe.proxy_transcript import get_proxy_transcript
+    
+    start_time = time.time()
+    result = {
+        "success": False,
+        "video_id": video_id,
+        "title": title,
+        "youtube_url": youtube_url,
+        "method": "-",
+        "error": None,
+        "elapsed": 0.0,
+        "transcript_path": None,
+        "metadata": {},
+        "blocked": False,
+    }
+    
+    try:
+        # Step 1: Fetch metadata
+        meta = fetch_youtube_metadata(youtube_url)
+        result["video_id"] = meta.video_id or video_id
+        result["title"] = meta.title or title or row.get("title", "")
+        result["metadata"] = {
+            "duration": meta.raw.get("duration", "Unknown"),
+            "channel": meta.raw.get("channel", "Unknown"),
+            "upload_date": meta.raw.get("upload_date"),
+        }
+        
+        if not result["video_id"]:
+            result["error"] = "Could not extract video ID from URL"
+            result["elapsed"] = time.time() - start_time
+            return result
+        
+        # Save metadata
+        meta_path = os.path.join(
+            session_youtube_dir, 
+            f"{slugify(result['title'])}__{result['video_id']}.metadata.json"
+        )
+        save_metadata_json(meta_path, meta.raw)
+        
+        # Step 2: Get transcript using proxy method
+        transcript_result = get_proxy_transcript(youtube_url)
+        result["elapsed"] = time.time() - start_time
+        result["method"] = transcript_result.method
+        
+        if transcript_result.success:
+            # Step 3: Write transcript file
+            filename = generate_filename(result["video_id"], result["title"], "youtube")
+            transcript_path = os.path.join(session_youtube_dir, filename)
+            
+            write_transcript_markdown(
+                output_path=transcript_path,
+                source_type="youtube",
+                source_url=youtube_url,
+                transcript_text=transcript_result.transcript_text or "",
+                title=result["title"],
+                description=row.get("description"),
+                video_id=result["video_id"],
+                method=transcript_result.method,
+                youtube_metadata=result["metadata"],
+            )
+            
+            result["success"] = True
+            result["transcript_path"] = transcript_path
+        else:
+            result["error"] = transcript_result.error_message or "Unknown error"
+            if result["error"] and "blocked" in result["error"].lower():
+                result["blocked"] = True
+                
+    except Exception as e:
+        result["error"] = str(e)
+        result["elapsed"] = time.time() - start_time
+    
+    return result
+
+
 def categorize_error(error_msg: str, is_code_error: bool = False) -> tuple[str, str]:
     """
     Categorize errors for proxy-based extraction.
@@ -74,6 +166,12 @@ from src.bulk_transcribe.sheet_ingest import (
 from src.bulk_transcribe.session_manager import SessionConfig, SessionManager
 from src.bulk_transcribe.metadata_transfer import detect_input_type, metadata_to_parsed_sheet, validate_metadata_list
 from src.bulk_transcribe.proxy_transcript import get_proxy_transcript, check_proxy_health
+from src.bulk_transcribe.parallel_processor import (
+    ParallelTranscriptProcessor,
+    VideoTask,
+    create_video_task,
+    ProcessingResult,
+)
 
 
 @dataclass
@@ -449,6 +547,26 @@ with col2:
 with col3:
     st.subheader("[CTL] Controls")
 
+    # Parallel processing controls
+    use_parallel = st.checkbox(
+        "Enable parallel processing",
+        value=True,
+        help="Process multiple videos simultaneously for faster throughput",
+        key="use_parallel_checkbox"
+    )
+
+    if use_parallel:
+        max_workers = st.slider(
+            "Concurrent tasks",
+            min_value=2,
+            max_value=20,
+            value=5,
+            help="Number of videos to process simultaneously. Start with 2-5 for testing.",
+            key="max_workers_slider"
+        )
+    else:
+        max_workers = 1
+
     if st.session_state.processing_state.get('is_running', False) and not st.session_state.processing_state.get('stop_requested', False):
         if st.button("[STOP] STOP PROCESSING",
                      key="stop_processing_button",
@@ -471,261 +589,430 @@ start_idx = processed_count
 processing_crashed = False
 crash_error = None
 
-try:
-    st.session_state.processing_state['is_running'] = True
-
+# ============================================================================
+# PARALLEL PROCESSING MODE
+# ============================================================================
+if use_parallel and max_workers > 1:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+    
+    st.info(f"[PARALLEL] Processing with {max_workers} concurrent workers")
+    
+    # Filter YouTube videos to process
+    youtube_tasks = []
     for idx in range(start_idx, total_rows):
-        if st.session_state.processing_state['should_stop']:
-            st.warning("[!] Processing stopped by user. Already completed videos were saved.")
-            break
-
         row = rows[idx]
-        row_index = row.get("_row_index", str(idx + 1))
         source_type = row.get("source_type", "").lower()
         youtube_url = row.get("youtube_url", "").strip()
-
-        video_status = {
-            "Row": row_index,
-            "URL": youtube_url[:40] + "..." if len(youtube_url) > 40 else youtube_url,
-            "Title": "-",
-            "Duration": "-",
-            "Status": "[...] Starting...",
-            "Method": "-",
-            "Error": "-",
-            "Time": "-"
-        }
-
-        start_time = time.time()
-
-        with current_video_info.container():
-            st.write(f"**Processing:** {row_index}/{total_rows}")
-            st.write(f"**URL:** {youtube_url[:60]}{'...' if len(youtube_url) > 60 else ''}")
-
-        with current_video_meta.container():
-            st.empty()
-
-        try:
-            if source_type == "youtube" and youtube_url:
-                from src.bulk_transcribe.youtube_metadata import fetch_youtube_metadata, save_metadata_json
-                from src.bulk_transcribe.transcript_writer import write_transcript_markdown, generate_filename
-                from src.bulk_transcribe.utils import slugify
-
-                # Step 1: Fetch metadata
-                video_status["Status"] = "[META] Fetching metadata..."
-                status_data.insert(0, video_status.copy())
-                status_table.dataframe(pd.DataFrame(status_data), use_container_width=True)
-
+        row_index = row.get("_row_index", str(idx + 1))
+        
+        if source_type == "youtube" and youtube_url:
+            # Extract video ID from URL for task creation
+            import re
+            video_id_match = re.search(
+                r"(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})",
+                youtube_url
+            )
+            video_id = video_id_match.group(1) if video_id_match else ""
+            title = row.get("title", "")
+            
+            youtube_tasks.append({
+                "idx": idx,
+                "row_index": row_index,
+                "row": row,
+                "youtube_url": youtube_url,
+                "video_id": video_id,
+                "title": title,
+            })
+        else:
+            # Non-YouTube entries are skipped
+            video_status = {
+                "Row": row_index,
+                "URL": youtube_url[:40] + "..." if len(youtube_url) > 40 else youtube_url,
+                "Title": "-",
+                "Duration": "-",
+                "Status": "[SKIP] Skipped",
+                "Method": "-",
+                "Error": "Non-YouTube or invalid source",
+                "Time": "-"
+            }
+            status_data.insert(0, video_status)
+            processed_count += 1
+    
+    # Update status table with skipped entries
+    if status_data:
+        status_table.dataframe(pd.DataFrame(status_data), use_container_width=True)
+    
+    # Process YouTube videos in parallel
+    total_youtube = len(youtube_tasks)
+    completed_parallel = 0
+    
+    try:
+        st.session_state.processing_state['is_running'] = True
+        
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="transcript") as executor:
+            # Submit all tasks
+            future_to_task = {}
+            for task_info in youtube_tasks:
+                future = executor.submit(
+                    process_single_video_parallel,
+                    task_info["youtube_url"],
+                    task_info["video_id"],
+                    task_info["title"],
+                    task_info["row"],
+                    session.youtube_dir,
+                )
+                future_to_task[future] = task_info
+            
+            # Poll for results and update UI (from main thread)
+            for future in as_completed(future_to_task):
+                if st.session_state.processing_state.get('should_stop', False):
+                    # Cancel remaining futures
+                    for f in future_to_task:
+                        if not f.done():
+                            f.cancel()
+                    st.warning("[!] Processing stopped by user. Already completed videos were saved.")
+                    break
+                
+                task_info = future_to_task[future]
+                row_index = task_info["row_index"]
+                youtube_url = task_info["youtube_url"]
+                
                 try:
-                    meta = fetch_youtube_metadata(youtube_url)
-                    video_id = meta.video_id
-                    title = meta.title or row.get("title", "")
+                    result = future.result(timeout=120)  # 2 minute timeout per video
+                except Exception as e:
+                    result = {
+                        "success": False,
+                        "video_id": task_info["video_id"],
+                        "title": task_info["title"],
+                        "youtube_url": youtube_url,
+                        "method": "-",
+                        "error": str(e),
+                        "elapsed": 0.0,
+                        "metadata": {},
+                        "blocked": False,
+                    }
+                
+                # Update counters
+                completed_parallel += 1
+                processed_count += 1
+                
+                # Build status entry
+                video_status = {
+                    "Row": row_index,
+                    "URL": youtube_url[:40] + "..." if len(youtube_url) > 40 else youtube_url,
+                    "Title": (result.get("title", "-")[:30] + "...") if len(result.get("title", "")) > 30 else result.get("title", "-"),
+                    "Duration": result.get("metadata", {}).get("duration", "-"),
+                    "Status": "[OK] Success" if result["success"] else "[X] Failed",
+                    "Method": result.get("method", "-"),
+                    "Error": "-" if result["success"] else (result.get("error", "Unknown")[:50] if result.get("error") else "-"),
+                    "Time": f"{result.get('elapsed', 0):.1f}s"
+                }
+                
+                if result["success"]:
+                    success_count += 1
+                else:
+                    failed_count += 1
+                    if result.get("blocked"):
+                        blocked_count += 1
+                
+                # Update UI from main thread
+                status_data.insert(0, video_status)
+                status_table.dataframe(pd.DataFrame(status_data), use_container_width=True)
+                
+                with global_progress_bar.container():
+                    progress_pct = processed_count / total_rows
+                    st.progress(progress_pct)
+                    st.write(f"**Overall Progress:** {processed_count}/{total_rows} videos")
+                
+                with global_stats_display.container():
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        st.metric("[OK] Successful", success_count)
+                    with col_b:
+                        st.metric("[X] Failed", failed_count)
+                    with col_c:
+                        st.metric("[...] Remaining", total_rows - processed_count)
+                
+                with current_video_info.container():
+                    st.write(f"**Completed:** {completed_parallel}/{total_youtube}")
+                    st.write(f"**Last:** {result.get('title', 'Unknown')[:40]}")
+                
+                # Update session state
+                st.session_state.processing_state.update({
+                    'processed_count': processed_count,
+                    'success_count': success_count,
+                    'failed_count': failed_count,
+                    'blocked_count': blocked_count,
+                    'status_history': status_data
+                })
+        
+    except Exception as e:
+        processing_crashed = True
+        crash_error = str(e)
+        st.error(f"[CRASH] Parallel processing crashed: {crash_error}")
+    
+    st.session_state.processing_state['is_running'] = False
 
-                    if not video_id:
-                        video_status.update({
-                            "Status": "[X] Failed",
-                            "Error": "Could not extract video ID from URL"
-                        })
-                        failed_count += 1
-                        processed_count += 1
-                        status_data[0] = video_status
-                        st.session_state.processing_state.update({
-                            'processed_count': processed_count,
-                            'failed_count': failed_count,
-                            'status_history': status_data
-                        })
-                        continue
+# ============================================================================
+# SEQUENTIAL PROCESSING MODE (fallback or when parallel is disabled)
+# ============================================================================
+else:
+    try:
+        st.session_state.processing_state['is_running'] = True
 
-                    duration_str = meta.raw.get("duration", "Unknown")
-                    channel_name = meta.raw.get("channel", "Unknown")
+        for idx in range(start_idx, total_rows):
+            if st.session_state.processing_state['should_stop']:
+                st.warning("[!] Processing stopped by user. Already completed videos were saved.")
+                break
 
-                    video_status.update({
-                        "Title": title[:30] + "..." if len(title) > 30 else title,
-                        "Duration": duration_str,
-                    })
+            row = rows[idx]
+            row_index = row.get("_row_index", str(idx + 1))
+            source_type = row.get("source_type", "").lower()
+            youtube_url = row.get("youtube_url", "").strip()
 
-                    with current_video_meta.container():
-                        st.write(f"**Title:** {title}")
-                        st.write(f"**Duration:** {duration_str}")
-                        st.write(f"**Channel:** {channel_name}")
+            video_status = {
+                "Row": row_index,
+                "URL": youtube_url[:40] + "..." if len(youtube_url) > 40 else youtube_url,
+                "Title": "-",
+                "Duration": "-",
+                "Status": "[...] Starting...",
+                "Method": "-",
+                "Error": "-",
+                "Time": "-"
+            }
 
-                    meta_path = os.path.join(session.youtube_dir, f"{slugify(title)}__{video_id}.metadata.json")
-                    save_metadata_json(meta_path, meta.raw)
+            start_time = time.time()
 
-                    # Step 2: Get transcript using proxy method
-                    video_status["Status"] = "[PROXY] Extracting transcript..."
-                    status_data[0] = video_status.copy()
+            with current_video_info.container():
+                st.write(f"**Processing:** {row_index}/{total_rows}")
+                st.write(f"**URL:** {youtube_url[:60]}{'...' if len(youtube_url) > 60 else ''}")
+
+            with current_video_meta.container():
+                st.empty()
+
+            try:
+                if source_type == "youtube" and youtube_url:
+                    from src.bulk_transcribe.youtube_metadata import fetch_youtube_metadata, save_metadata_json
+                    from src.bulk_transcribe.transcript_writer import write_transcript_markdown, generate_filename
+                    from src.bulk_transcribe.utils import slugify
+
+                    # Step 1: Fetch metadata
+                    video_status["Status"] = "[META] Fetching metadata..."
+                    status_data.insert(0, video_status.copy())
                     status_table.dataframe(pd.DataFrame(status_data), use_container_width=True)
 
-                    # Use proxy-based extraction
-                    transcript_result = get_proxy_transcript(youtube_url)
-                    elapsed = time.time() - start_time
+                    try:
+                        meta = fetch_youtube_metadata(youtube_url)
+                        video_id = meta.video_id
+                        title = meta.title or row.get("title", "")
 
-                    if transcript_result.success:
-                        filename = generate_filename(video_id, title, "youtube")
-                        transcript_path = os.path.join(session.youtube_dir, filename)
+                        if not video_id:
+                            video_status.update({
+                                "Status": "[X] Failed",
+                                "Error": "Could not extract video ID from URL"
+                            })
+                            failed_count += 1
+                            processed_count += 1
+                            status_data[0] = video_status
+                            st.session_state.processing_state.update({
+                                'processed_count': processed_count,
+                                'failed_count': failed_count,
+                                'status_history': status_data
+                            })
+                            continue
 
-                        write_transcript_markdown(
-                            output_path=transcript_path,
-                            source_type="youtube",
-                            source_url=youtube_url,
-                            transcript_text=transcript_result.transcript_text or "",
-                            title=title or meta.title,
-                            description=row.get("description"),
-                            video_id=video_id,
-                            method=transcript_result.method,
-                            youtube_metadata={
-                                "channel": meta.raw.get("channel"),
-                                "upload_date": meta.raw.get("upload_date"),
-                                "duration": meta.raw.get("duration"),
-                            },
-                        )
+                        duration_str = meta.raw.get("duration", "Unknown")
+                        channel_name = meta.raw.get("channel", "Unknown")
 
                         video_status.update({
-                            "Status": "[OK] Success",
-                            "Method": transcript_result.method,
-                            "Time": f"{elapsed:.1f}s"
+                            "Title": title[:30] + "..." if len(title) > 30 else title,
+                            "Duration": duration_str,
                         })
-                        success_count += 1
-                    else:
-                        error_msg = transcript_result.error_message or "Unknown error"
-                        status_icon, display_error = categorize_error(error_msg)
 
-                        if "blocked" in display_error.lower():
-                            blocked_count += 1
+                        with current_video_meta.container():
+                            st.write(f"**Title:** {title}")
+                            st.write(f"**Duration:** {duration_str}")
+                            st.write(f"**Channel:** {channel_name}")
+
+                        meta_path = os.path.join(session.youtube_dir, f"{slugify(title)}__{video_id}.metadata.json")
+                        save_metadata_json(meta_path, meta.raw)
+
+                        # Step 2: Get transcript using proxy method
+                        video_status["Status"] = "[PROXY] Extracting transcript..."
+                        status_data[0] = video_status.copy()
+                        status_table.dataframe(pd.DataFrame(status_data), use_container_width=True)
+
+                        # Use proxy-based extraction
+                        transcript_result = get_proxy_transcript(youtube_url)
+                        elapsed = time.time() - start_time
+
+                        if transcript_result.success:
+                            filename = generate_filename(video_id, title, "youtube")
+                            transcript_path = os.path.join(session.youtube_dir, filename)
+
+                            write_transcript_markdown(
+                                output_path=transcript_path,
+                                source_type="youtube",
+                                source_url=youtube_url,
+                                transcript_text=transcript_result.transcript_text or "",
+                                title=title or meta.title,
+                                description=row.get("description"),
+                                video_id=video_id,
+                                method=transcript_result.method,
+                                youtube_metadata={
+                                    "channel": meta.raw.get("channel"),
+                                    "upload_date": meta.raw.get("upload_date"),
+                                    "duration": meta.raw.get("duration"),
+                                },
+                            )
+
+                            video_status.update({
+                                "Status": "[OK] Success",
+                                "Method": transcript_result.method,
+                                "Time": f"{elapsed:.1f}s"
+                            })
+                            success_count += 1
+                        else:
+                            error_msg = transcript_result.error_message or "Unknown error"
+                            status_icon, display_error = categorize_error(error_msg)
+
+                            if "blocked" in display_error.lower():
+                                blocked_count += 1
+
+                            video_status.update({
+                                "Status": f"{status_icon} Failed",
+                                "Method": transcript_result.method,
+                                "Error": display_error,
+                                "Time": f"{elapsed:.1f}s"
+                            })
+                            failed_count += 1
+
+                    except Exception as e:
+                        elapsed = time.time() - start_time
+                        error_msg = str(e)
+                        status_icon, display_error = categorize_error(error_msg)
 
                         video_status.update({
                             "Status": f"{status_icon} Failed",
-                            "Method": transcript_result.method,
                             "Error": display_error,
                             "Time": f"{elapsed:.1f}s"
                         })
                         failed_count += 1
 
-                except Exception as e:
-                    elapsed = time.time() - start_time
-                    error_msg = str(e)
-                    status_icon, display_error = categorize_error(error_msg)
+                        update_status_safe(status_data, video_status, status_table)
 
+                elif source_type == "podcast":
                     video_status.update({
-                        "Status": f"{status_icon} Failed",
-                        "Error": display_error,
-                        "Time": f"{elapsed:.1f}s"
+                        "Status": "[SKIP] Skipped",
+                        "Error": "Podcast processing not supported in proxy mode"
                     })
-                    failed_count += 1
-
                     update_status_safe(status_data, video_status, status_table)
 
-            elif source_type == "podcast":
+                else:
+                    video_status.update({
+                        "Status": "[SKIP] Skipped",
+                        "Error": "Invalid source_type or missing URL"
+                    })
+                    update_status_safe(status_data, video_status, status_table)
+
+            except Exception as e:
+                elapsed = time.time() - start_time
+                error_msg = str(e)
+                status_icon, display_error = categorize_error(error_msg, is_code_error=True)
+
                 video_status.update({
-                    "Status": "[SKIP] Skipped",
-                    "Error": "Podcast processing not supported in proxy mode"
+                    "Status": f"{status_icon} Crash",
+                    "Error": display_error,
+                    "Time": f"{elapsed:.1f}s"
                 })
+                failed_count += 1
+
                 update_status_safe(status_data, video_status, status_table)
 
-            else:
-                video_status.update({
-                    "Status": "[SKIP] Skipped",
-                    "Error": "Invalid source_type or missing URL"
-                })
-                update_status_safe(status_data, video_status, status_table)
+            processed_count += 1
 
-        except Exception as e:
-            elapsed = time.time() - start_time
-            error_msg = str(e)
-            status_icon, display_error = categorize_error(error_msg, is_code_error=True)
+            with global_progress_bar.container():
+                progress_pct = processed_count / total_rows
+                st.progress(progress_pct)
+                st.write(f"**Overall Progress:** {processed_count}/{total_rows} videos")
 
-            video_status.update({
-                "Status": f"{status_icon} Crash",
-                "Error": display_error,
-                "Time": f"{elapsed:.1f}s"
+            with global_stats_display.container():
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("[OK] Successful", success_count)
+                with col_b:
+                    st.metric("[X] Failed", failed_count)
+                with col_c:
+                    st.metric("[...] Remaining", total_rows - processed_count)
+
+            status_data.insert(0, video_status)
+            status_table.dataframe(pd.DataFrame(status_data), use_container_width=True)
+
+            st.session_state.processing_state.update({
+                'processed_count': processed_count,
+                'success_count': success_count,
+                'failed_count': failed_count,
+                'blocked_count': blocked_count,
+                'status_history': status_data
             })
-            failed_count += 1
 
-            update_status_safe(status_data, video_status, status_table)
+            # Rate limiting delay (proxy method has built-in rate limiting, but add small buffer)
+            if idx < total_rows - 1 and not st.session_state.processing_state['should_stop']:
+                delay = 0.5  # Shorter delay since proxy method has internal rate limiting
+                with st.spinner(f"Brief pause before next video..."):
+                    time.sleep(delay)
 
-        processed_count += 1
+            # Update manifest with current progress
+            try:
+                current_items = manager.read_manifest(session.session_dir).get("items", [])
+                for item in current_items:
+                    if item.get("row_index") == row_index:
+                        if "[OK]" in video_status["Status"]:
+                            item["status"] = "completed"
+                        elif any(icon in video_status["Status"] for icon in ["[X]", "[SKIP]", "[BLK]", "[PVT]", "[NC]"]):
+                            item["status"] = "failed"
+                        else:
+                            item["status"] = "processing"
+                        break
 
-        with global_progress_bar.container():
-            progress_pct = processed_count / total_rows
-            st.progress(progress_pct)
-            st.write(f"**Overall Progress:** {processed_count}/{total_rows} videos")
+                manifest_data = {
+                    "session_id": session.session_id,
+                    "created_at": datetime.now().isoformat(),
+                    "extraction_method": "proxy_residential",
+                    "items": current_items
+                }
+                manager.write_manifest(session.session_dir, manifest_data)
+            except Exception as e:
+                pass
 
-        with global_stats_display.container():
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                st.metric("[OK] Successful", success_count)
-            with col_b:
-                st.metric("[X] Failed", failed_count)
-            with col_c:
-                st.metric("[...] Remaining", total_rows - processed_count)
+    except Exception as processing_error:
+        processing_crashed = True
+        crash_error = str(processing_error)
 
-        status_data.insert(0, video_status)
-        status_table.dataframe(pd.DataFrame(status_data), use_container_width=True)
+        crash_status = {
+            "Row": "CRASH",
+            "URL": "Processing interrupted",
+            "Title": "N/A",
+            "Duration": "N/A",
+            "Status": "[CRASH] CRASH",
+            "Method": "N/A",
+            "Error": f"Code error: {crash_error}",
+            "Time": "N/A"
+        }
 
-        st.session_state.processing_state.update({
-            'processed_count': processed_count,
-            'success_count': success_count,
-            'failed_count': failed_count,
-            'blocked_count': blocked_count,
-            'status_history': status_data
-        })
-
-        # Rate limiting delay (proxy method has built-in rate limiting, but add small buffer)
-        if idx < total_rows - 1 and not st.session_state.processing_state['should_stop']:
-            delay = 0.5  # Shorter delay since proxy method has internal rate limiting
-            with st.spinner(f"Brief pause before next video..."):
-                time.sleep(delay)
-
-        # Update manifest with current progress
+        status_data.insert(0, crash_status)
         try:
-            current_items = manager.read_manifest(session.session_dir).get("items", [])
-            for item in current_items:
-                if item.get("row_index") == row_index:
-                    if "[OK]" in video_status["Status"]:
-                        item["status"] = "completed"
-                    elif any(icon in video_status["Status"] for icon in ["[X]", "[SKIP]", "[BLK]", "[PVT]", "[NC]"]):
-                        item["status"] = "failed"
-                    else:
-                        item["status"] = "processing"
-                    break
-
-            manifest_data = {
-                "session_id": session.session_id,
-                "created_at": datetime.now().isoformat(),
-                "extraction_method": "proxy_residential",
-                "items": current_items
-            }
-            manager.write_manifest(session.session_dir, manifest_data)
-        except Exception as e:
+            status_table.dataframe(pd.DataFrame(status_data), use_container_width=True)
+        except:
             pass
 
-except Exception as processing_error:
-    processing_crashed = True
-    crash_error = str(processing_error)
+        st.error(f"[CRASH] Processing crashed due to code error: {crash_error}")
+        st.error("**This is a bug in the application, not a proxy issue.**")
 
-    crash_status = {
-        "Row": "CRASH",
-        "URL": "Processing interrupted",
-        "Title": "N/A",
-        "Duration": "N/A",
-        "Status": "[CRASH] CRASH",
-        "Method": "N/A",
-        "Error": f"Code error: {crash_error}",
-        "Time": "N/A"
-    }
-
-    status_data.insert(0, crash_status)
-    try:
-        status_table.dataframe(pd.DataFrame(status_data), use_container_width=True)
-    except:
-        pass
-
-    st.error(f"[CRASH] Processing crashed due to code error: {crash_error}")
-    st.error("**This is a bug in the application, not a proxy issue.**")
+        st.session_state.processing_state['is_running'] = False
 
     st.session_state.processing_state['is_running'] = False
-
-st.session_state.processing_state['is_running'] = False
 
 # Final summary
 if processing_crashed:

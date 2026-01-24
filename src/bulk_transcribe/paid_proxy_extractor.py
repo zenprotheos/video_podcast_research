@@ -9,6 +9,7 @@ import logging
 import os
 import random
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional
@@ -20,18 +21,25 @@ logger = logging.getLogger(__name__)
 
 
 class RateLimiter:
-    """Simple rate limiter for API requests."""
+    """
+    Thread-safe rate limiter for API requests.
+    
+    Uses a lock to ensure correct rate limiting when called from
+    multiple threads simultaneously (e.g., during parallel processing).
+    """
 
     def __init__(self, requests_per_second: float = 2.0):
         self.min_interval = 1.0 / requests_per_second
         self.last_request = 0.0
+        self._lock = threading.Lock()
 
     def wait_if_needed(self) -> None:
-        """Wait if needed to maintain rate limit."""
-        elapsed = time.time() - self.last_request
-        if elapsed < self.min_interval:
-            time.sleep(self.min_interval - elapsed)
-        self.last_request = time.time()
+        """Wait if needed to maintain rate limit (thread-safe)."""
+        with self._lock:
+            elapsed = time.time() - self.last_request
+            if elapsed < self.min_interval:
+                time.sleep(self.min_interval - elapsed)
+            self.last_request = time.time()
 
 
 class PaidProxyYouTubeExtractor:
