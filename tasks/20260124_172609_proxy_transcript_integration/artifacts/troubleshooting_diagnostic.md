@@ -1,12 +1,12 @@
-# Troubleshooting: Proxy Transcript Integration Failure
+# Troubleshooting: Proxy Transcript Integration (Resolved)
 
-## Problem Statement
+## Current Status
 
-- Quick test script: **WORKS** (11,522 chars extracted)
-- Streamlit page integration: **FAILS** (0/14 success, "No captions available")
-- Same videos, same extractor code, different results
+- Proxy-based extraction works in both command line tests and the Streamlit page.
+- The earlier Streamlit failure was traced to an outdated `youtube-transcript-api` version in the virtualenv.
+- The extractor now prefers `youtube-transcript-api` with Webshare proxy configuration and falls back to manual HTML parsing if needed.
 
-## Investigation Results
+## Investigation Results (Historical)
 
 ### Diagnostic Test (2026-01-24 17:36)
 
@@ -20,19 +20,11 @@ This proves:
 2. The proxy configuration is valid
 3. The videos DO have captions
 
-### Root Cause Hypothesis
+### Root Cause (Confirmed)
 
-The Streamlit context has some difference that causes extraction to fail. Possible causes:
-
-1. **Working Directory Issue**
-   - Command line: Explicitly `os.chdir(project_root)`
-   - Streamlit: May run from different CWD
-
-2. **Environment Variable Timing**
-   - The singleton might be created before .env is loaded
-
-3. **Module State Corruption**
-   - The singleton extractor might get into a bad state
+- `.venv` used `youtube-transcript-api` 0.6.x, which lacks the `proxies.WebshareProxyConfig` integration.
+- Streamlit used the virtualenv, so proxy extraction failed at import time and fell back to manual parsing.
+- Updating `requirements.txt` to `youtube-transcript-api>=1.0.0` resolved the mismatch.
 
 ## Debug Output Added
 
@@ -42,13 +34,11 @@ Added `[PROXY_DEBUG]` and `[EXTRACTOR_DEBUG]` print statements to:
 
 These will print to the Streamlit console (terminal where `streamlit run` is executed).
 
-## Next Steps for User
+## Operational Notes
 
-1. Restart Streamlit (`streamlit run app.py`)
-2. Navigate to "Bulk Transcribe Proxy" page
-3. Run a test with 1-2 videos
-4. Check the terminal output for `[PROXY_DEBUG]` and `[EXTRACTOR_DEBUG]` lines
-5. Share the terminal output to identify the failure point
+1. Ensure `WEBSHARE_PROXY_FILE` points to a valid WebShare credential file.
+2. Run `streamlit run app.py` and open the **Bulk Transcribe (Proxy)** page.
+3. Optional: keep `[PROXY_DEBUG]` / `[EXTRACTOR_DEBUG]` logging enabled for diagnostics.
 
 ## Data Flow Diagram
 
@@ -72,9 +62,9 @@ flowchart TD
     subgraph ProxyTranscript [proxy_transcript.py]
         G --> K[_get_extractor singleton]
         K --> L[PaidProxyYouTubeExtractor.extract_transcript]
-        L --> M{youtube-transcript-api}
+        L --> M{youtube-transcript-api + WebshareProxyConfig}
         M -->|Success| N[Return dict with text]
-        M -->|Fail| O[Fallback to manual method]
+        M -->|Fail| O[Fallback to manual HTML parsing]
         O --> P{Manual parse}
         P -->|Success| N
         P -->|Fail| Q[Return None]
