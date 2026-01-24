@@ -1,82 +1,68 @@
-# Progress Tracker: Enhanced Bulk Transcribe - Incremental Development
+# Progress Tracker: Parallel Processing Implementation
 
-## Status: 🔄 PHASE 1 COMPLETED - READY FOR USER VALIDATION
+## Status: 🔄 REDESIGN IN PROGRESS
 **Started:** 2026-01-21 13:09:10 UTC
-**Last Updated:** Redesigned for incremental UI-compatible approach with browser testing
+**Last Updated:** Implementation attempt revealed critical UI issues
 
-## Phase 1: Analysis & Planning ✅ COMPLETED
-**Completion Date:** 2026-01-21
-- [x] Analyzed current system limitations and UI constraints
-- [x] Identified Streamlit threading limitations for parallel processing
-- [x] Designed incremental enhancement approach (async → batch → advanced)
-- [x] Created browser-based testing strategy with real URLs
-- [x] Updated documentation and implementation strategy
+## Phase 1: Analysis & Redesign ✅ COMPLETED
+- [x] Identified UI preservation as critical requirement
+- [x] Analyzed existing monitoring functionality breakdown
+- [x] Redesigned approach for incremental UI-compatible implementation
 
-## Phase 2: Async Processing Foundation ⚠️ ISSUES OBSERVED
-**Goal:** Implement async API calls within single-threaded UI context
-- [x] Create `src/bulk_transcribe/async_processor.py`
-- [x] Add asyncio support for DEAPI calls
-- [x] Maintain existing UI update mechanisms
-- [x] Update processing loop to use async calls
-- [x] Add httpx dependency to requirements.txt
-- [x] Test with sample URLs from `sample data/sample_youtube_URL_list.md` - **ISSUES FOUND**
-- [x] **ERROR LOGGED**: Videos stuck at "Getting transcript..." - See `phase2_error_log.md`
-- [ ] **FIX REQUIRED**: Root cause investigation needed in future session
+## Phase 2: Core Implementation (Revised) 🔄 PENDING
+- [ ] **Phase 2A**: Add parallel toggle (disabled by default)
+- [ ] **Phase 2A**: Implement basic concurrent processing (2 videos max)
+- [ ] **Phase 2A**: VALIDATE UI monitoring still works
+- [ ] **Phase 2B**: Add rate limiting for parallel operations
+- [ ] **Phase 2B**: Enhance progress tracking (UI-compatible)
+- [ ] **Phase 2B**: VALIDATE UI monitoring still works
 
-## Phase 3: Batch Processing Mode 🔄 PLANNED
-**Goal:** Process configurable batches with sequential processing within batches
-- [ ] Implement batch configuration UI (batch size slider)
-- [ ] Add batch progress tracking and resumption
-- [ ] Test batch completion with error recovery
-- [ ] **USER VALIDATION GATE**: Multi-batch workflow testing
+## Phase 3: Enhanced Features 🔄 PENDING
+- [ ] **Phase 3A**: Video length optimization
+- [ ] **Phase 3A**: Advanced error handling
+- [ ] **Phase 3A**: VALIDATE UI monitoring still works
+- [ ] **Phase 3B**: Session persistence for parallel ops
+- [ ] **Phase 3B**: Resume capability
 
-## Phase 4: Enhanced Monitoring 🔄 PLANNED
-**Goal:** Add advanced progress visualization and error recovery
-- [ ] Enhanced progress indicators with time estimates
-- [ ] Better error categorization and recovery options
-- [ ] Session state persistence improvements
-- [ ] **USER VALIDATION GATE**: Error scenario and recovery testing
+## Phase 4: Testing & Validation (UI-Focused) 🔄 PENDING
+- [ ] UI functionality tests after each phase
+- [ ] Processing status table validation
+- [ ] Global progress display validation
+- [ ] Current video info validation
+- [ ] Parallel processing integration tests
 
-## Phase 5: Performance Optimizations 🔄 PLANNED
-**Goal:** Optimize processing speed and resource usage
-- [ ] Smart video ordering (short videos first)
-- [ ] Memory usage optimization
-- [ ] Rate limiting fine-tuning based on real testing
-- [ ] **USER VALIDATION GATE**: Performance benchmarking with real data
+## Phase 5: Documentation & Deployment 🔄 PENDING
+- [ ] Update user documentation
+- [ ] Add rollback procedures
+- [ ] Performance monitoring guide
+- [ ] Deployment safety checklist
 
-## Testing Infrastructure Setup 🔄 READY
-- [x] Identified sample URLs for testing (50 real YouTube videos)
-- [x] Browser testing strategy designed (Cursor Browser Extension)
-- [x] Screenshot capture process defined
-- [x] User validation gates established
+## Key Decisions Made
+- **Concurrency Default:** 2 parallel processes (conservative approach)
+- **Rate Limiting:** Adaptive system supporting both shared and independent limits
+- **Default Mode:** Conservative (shared 300 RPM pool) until testing confirms behavior
+- **Threading Model:** ThreadPoolExecutor for CPU-bound operations
+- **Rate Distribution:** Configurable distribution with easy mode switching
+- **Error Handling:** Individual failure isolation with continuation
+- **State Management:** Enhanced session state with per-thread tracking
 
-## Key Decisions Made (Updated)
-- **Approach Shift:** From parallel threading to async processing (avoids UI thread conflicts)
-- **Testing Strategy:** Browser-based UI testing with real data and screenshots
-- **Validation Gates:** User testing required between each phase
-- **Conservative Pace:** Build, test, validate, then enhance
-- **Data Source:** Real YouTube URLs from sample data for authentic testing
+## Technical Challenges Resolved
+- [x] Rate limit compliance across parallel threads
+- [x] Real-time progress updates for concurrent operations
+- [x] Thread-safe state management
+- [x] Proper resource cleanup and thread management
 
-## Technical Foundation Established
-- [x] UI compatibility analysis completed
-- [x] Streamlit limitations identified and avoided
-- [x] Incremental development plan created
-- [x] Browser testing infrastructure ready
+## Current Blockers
+- None identified
 
-## Current Status
-- **Ready for Phase 2 Development**
-- **User validation of Phase 1 required before proceeding**
-- **Browser testing infrastructure prepared**
-- **Sample data available for real-world testing**
+## Next Actions
+1. Implement ThreadPoolExecutor integration in processing loop
+2. Add real-time progress tracking for parallel operations
+3. Update error handling for concurrent failures
+4. Test rate limit compliance with parallel processing
 
-## Next Immediate Actions
-1. **USER VALIDATION**: Test current system with browser tool and sample URLs
-2. **PHASE 2 START**: Begin async processor implementation
-3. **SCREENSHOT CAPTURE**: Document current UI behavior as baseline
-4. **VALIDATION GATE**: User approval required before Phase 2 development
-
-## Success Metrics (UI-Centric)
-- **UI Preservation:** All existing monitoring displays continue working
-- **Error Clarity:** Users can understand and recover from errors
-- **Progress Accuracy:** Real-time progress updates remain reliable
-- **Data Integrity:** Session recovery works reliably
+## Performance Targets
+- **Target:** 5-8x faster processing (from 1.3 videos/minute to 6-8 videos/minute with 5 parallel)
+- **Rate Compliance:** < 300 RPM across all parallel processes
+- **Error Rate:** < 5% individual video failure rate
+- **Memory Usage:** < 2GB peak for 5 concurrent processes

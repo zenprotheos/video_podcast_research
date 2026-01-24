@@ -630,116 +630,66 @@ try:
                     meta_path = os.path.join(session.youtube_dir, f"{slugify(title)}__{video_id}.metadata.json")
                     save_metadata_json(meta_path, meta.raw)
 
-                except Exception as e:
-                    # Handle metadata fetching errors
-                    elapsed = time.time() - start_time
-                    error_msg = str(e)
-
-                    # Use error categorization for metadata errors
-                    status_icon, display_error = categorize_error(error_msg, is_code_error=True)
-
-                    video_status.update({
-                        "Status": f"{status_icon} Metadata Failed",
-                        "Error": display_error,
-                        "Time": f"{elapsed:.1f}s"
-                    })
-                    failed_count += 1
-                    processed_count += 1
-                    status_data[0] = video_status
-                    st.session_state.processing_state.update({
-                        'processed_count': processed_count,
-                        'failed_count': failed_count,
-                        'status_history': status_data
-                    })
-                    continue
-
-                # Step 2: Get transcript
-                try:
+                    # Step 2: Get transcript
                     video_status["Status"] = "🎙️ Getting transcript..."
                     status_data[0] = video_status.copy()
                     status_table.dataframe(pd.DataFrame(status_data), use_container_width=True)
 
-                    # Try YouTube captions first (fast, synchronous)
-                    from src.bulk_transcribe.youtube_transcript import try_youtube_captions, TranscriptResult
-                    transcript_text = try_youtube_captions(youtube_url)
-                
-                    if transcript_text:
-                        # YouTube captions available - use them
-                        transcript_result = TranscriptResult(
-                            success=True,
-                            method="youtube_captions",
-                            transcript_text=transcript_text,
+                    transcript_result = get_youtube_transcript(youtube_url, deapi_key)
+                    elapsed = time.time() - start_time
+
+                    if transcript_result.success:
+                        # Write transcript Markdown
+                        filename = generate_filename(video_id, title, "youtube")
+                        transcript_path = os.path.join(session.youtube_dir, filename)
+
+                        write_transcript_markdown(
+                            output_path=transcript_path,
+                            source_type="youtube",
+                            source_url=youtube_url,
+                            transcript_text=transcript_result.transcript_text or "",
+                            title=title or meta.title,
+                            description=row.get("description"),
+                            video_id=video_id,
+                            method=transcript_result.method,
+                            youtube_metadata={
+                                "channel": meta.raw.get("channel"),
+                                "upload_date": meta.raw.get("upload_date"),
+                                "duration": meta.raw.get("duration"),
+                            },
                         )
-                    elif deapi_key:
-                        # Fallback to async DEAPI processing
-                        from src.bulk_transcribe.async_processor import AsyncVideoProcessor, run_async_in_sync
-                        processor = AsyncVideoProcessor(deapi_key)
-                        try:
-                            transcript_result = run_async_in_sync(processor.process_video_async(youtube_url))
-                        finally:
-                            # Clean up async client
-                            run_async_in_sync(processor.close())
+
+                        video_status.update({
+                            "Status": "✅ Success",
+                            "Method": transcript_result.method,
+                            "Time": f"{elapsed:.1f}s"
+                        })
+                        success_count += 1
                     else:
-                        # No captions and no DEAPI key
-                        transcript_result = TranscriptResult(
-                            success=False,
-                            method="failed",
-                            error_message="No YouTube captions available and DEAPI_API_KEY not set",
-                        )
-                        elapsed = time.time() - start_time
+                        error_msg = transcript_result.error_message or "Unknown error"
+                        # Use improved error categorization
+                        status_icon, display_error = categorize_error(error_msg)
 
-                        if transcript_result.success:
-                            # Write transcript Markdown
-                            filename = generate_filename(video_id, title, "youtube")
-                            transcript_path = os.path.join(session.youtube_dir, filename)
+                        # Update counters based on error type
+                        if "Rate limited" in display_error:
+                            rate_limited_count += 1
+                        # Note: failed_count is still incremented for all failures
 
-                            write_transcript_markdown(
-                                output_path=transcript_path,
-                                source_type="youtube",
-                                source_url=youtube_url,
-                                transcript_text=transcript_result.transcript_text or "",
-                                title=title or meta.title,
-                                description=row.get("description"),
-                                video_id=video_id,
-                                method=transcript_result.method,
-                                youtube_metadata={
-                                    "channel": meta.raw.get("channel"),
-                                    "upload_date": meta.raw.get("upload_date"),
-                                    "duration": meta.raw.get("duration"),
-                                },
-                            )
+                        # Show raw server response instead of categorized message
+                        raw_error = transcript_result.raw_response_text or display_error
+                        if len(raw_error) > 100:
+                            raw_error = raw_error[:97] + "..."
 
-                            video_status.update({
-                                "Status": "✅ Success",
-                                "Method": transcript_result.method,
-                                "Time": f"{elapsed:.1f}s"
-                            })
-                            success_count += 1
-                        else:
-                            error_msg = transcript_result.error_message or "Unknown error"
-                            # Use improved error categorization
-                            status_icon, display_error = categorize_error(error_msg)
-
-                            # Update counters based on error type
-                            if "Rate limited" in display_error:
-                                rate_limited_count += 1
-                            # Note: failed_count is still incremented for all failures
-
-                            # Show raw server response instead of categorized message
-                            raw_error = transcript_result.raw_response_text or display_error
-                            if len(raw_error) > 100:
-                                raw_error = raw_error[:97] + "..."
-
-                            video_status.update({
-                                "Status": f"{status_icon} Failed",
-                                "Method": transcript_result.method,
-                                "Error": raw_error,
-                                "Status Code": transcript_result.http_status_code or "N/A",
-                                "Request ID": transcript_result.deapi_request_id or "N/A",
-                                "Raw Response": transcript_result.raw_response_text or "N/A",
-                                "Time": f"{elapsed:.1f}s"
-                            })
-                            failed_count += 1
+                        video_status.update({
+                            "Status": f"{status_icon} Failed",
+                            "Method": transcript_result.method,
+                            "Error": raw_error,
+                            "Status Code": transcript_result.http_status_code or "N/A",
+                            "Request ID": transcript_result.deapi_request_id or "N/A",
+                            "Raw Response": transcript_result.raw_response_text or "N/A",
+                            "Time": f"{elapsed:.1f}s"
+                        })
+                        failed_count += 1
 
                 except Exception as e:
                     elapsed = time.time() - start_time
