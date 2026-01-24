@@ -515,15 +515,16 @@ with col2:
 
 with col3:
     st.subheader("⚡ Controls")
-    stop_button = st.button(
-        "🛑 STOP PROCESSING",
-        type="secondary",
-        help="Stop processing remaining videos. Already processed videos will be saved.",
-        disabled=not st.session_state.processing_state.get('is_running', False)
-    )
-    if stop_button:
-        st.session_state.processing_state['should_stop'] = True
-        st.rerun()
+
+    # Conditionally render stop button - only show when processing and not already stopped
+    if st.session_state.processing_state.get('is_running', False) and not st.session_state.processing_state.get('stop_requested', False):
+        if st.button("🛑 STOP PROCESSING",
+                     key="stop_processing_button",
+                     type="secondary",
+                     help="Stop processing remaining videos. Already processed videos will be saved."):
+            st.session_state.processing_state['stop_requested'] = True
+            st.warning("Stop requested - stopping after current video completes...")
+            st.rerun()
 
 # Live status table
 st.subheader("📋 Processing Status (Most Recent First)")
