@@ -405,16 +405,6 @@ with input_method_container:
         else:
             planned_search_button = False
 
-        if st.session_state.search_execution_mode == "planned":
-            st.info("Planned queries will be used instead of the single query input.")
-            planned_search_button = st.button(
-                "Run planned queries",
-                type="primary",
-                use_container_width=True,
-            )
-        else:
-            planned_search_button = False
-
         # Update session state
         st.session_state.search_query = search_query
 

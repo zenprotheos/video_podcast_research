@@ -1,7 +1,7 @@
 # Task: YouTube search improvements
 
 ## Scope
-- Add query-planning step before YouTube search.
+- Add query-planning chat step before YouTube search.
 - Add configurable per-request max results and page budgeting.
 - Preserve a rollback copy of youtube_search.py.
 - Update specs and tracking artifacts.
