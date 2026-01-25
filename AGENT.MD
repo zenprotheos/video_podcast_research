@@ -1,43 +1,62 @@
 # AGENT.md
 
 ## Purpose
-This document defines authoritative operating rules for Claude Code when working in this repository.  
-All claims of work must correspond to real tool execution in the CLI.  
-Reasoning alone does not count as completed work.
+This document defines repository-specific verification and reporting conventions for Claude Code.
+Core operating rules are defined in `.cursor\rules\00-core.mdc` and are authoritative for this repository.
 
 ---
 
-## Claude Code Tool Command Reference (Authoritative)
+## Core Operating Framework
 
-Claude Code may only claim a task is complete if one or more tools that modify the repository were actually invoked.
+**Primary Rules Source:** `.cursor\rules\00-core.mdc`
 
-### Tool Semantics
+All work MUST follow these core rules:
+- Task-centric organization: meaningful work belongs to task workspaces under `tasks\`
+- No ad-hoc work in repo root
+- Specs in `docs\specs\` are the source of truth
+- Never use emojis in code
+- Python development guardrails: syntax validation, indentation checks, import standards
 
-| Tool | Purpose | Modifies Repo | Usage Rules |
-|---|---|---|---|
-| `read` | Load file contents into context | No | Must be used before modifying any existing file. Never assume file contents. |
-| `search` | Locate files, symbols, or text | No | Use to discover where changes should occur before editing. |
-| `write` | Create or fully overwrite a file | Yes | Use only for new files or intentional full rewrites. Avoid for incremental edits. |
-| `update` / `edit` / `patch` | Modify part of an existing file | Yes | Preferred tool for fixes and refactors. Preserve unrelated code. |
-| `run` | Execute shell commands | Conditional | Use for tests, builds, git commands, formatters. Does not modify files unless the command does. |
-| Filesystem ops (`mkdir`, `mv`, `rm`) | Change file structure | Yes | Must be intentional, explained, and minimal. |
+**Key Required Paths (repo-root relative):**
+- Tasks root: `tasks\`
+- Specs: `docs\specs\`
+- Standards: `docs/standards/`
+- Task resume: `docs/task_resume/`
 
----
-
-## Mandatory Tool Discipline Rules
-
-1. Do not claim files were changed unless a `write`, `update`, or filesystem operation was executed.
-2. Prefer `update` over `write` for existing files.
-3. If no repository-modifying tool was used, explicitly state:  
-   **“No files were modified.”**
-4. Always `read` a file before editing it.
-5. After any modifying action:
-    - Run `git status`
-    - Report which files changed
+**Standard Task Structure:**
+- `INDEX.md`
+- `progress_tracker_${TaskName}.md`
+- `specs_impact_assessment.md`
+- `tests\` (unit/e2e)
+- `temp\`
+- `artifacts\`
 
 ---
 
-## Failure Handling
+## Repository-Specific Conventions
+
+These conventions supplement the core rules with repo-specific expectations.
+
+### Verification After Modifications
+
+After any `Write`, `Edit`, or filesystem operation:
+- Run `git status`
+- Report which files changed
+
+### Communication Contract
+
+When finishing a task, always report:
+1. Tools used
+2. Files modified (if any)
+3. Whether changes are staged or unstaged
+
+### Accountability Standard
+
+- Claims of completed work must correspond to actual tool execution
+- Reasoning alone does not count as completed work
+- If no repository-modifying tool was used, explicitly state: **"No files were modified."**
+
+### Failure Handling
 
 - If a change cannot be applied due to permissions, missing files, uncertainty, or errors:
     - Stop execution
@@ -48,26 +67,8 @@ Claude Code may only claim a task is complete if one or more tools that modify t
 
 ---
 
-## Verification Expectations
-
-- Keep diffs minimal and focused.
-- Avoid unnecessary rewrites.
-- Run tests or linters when relevant.
-- Update documentation if behavior or interfaces changed.
-
----
-
-## Communication Contract
-
-When finishing a task, always report:
-
-1. Tools used
-2. Files modified (if any)
-3. Whether changes are staged or unstaged
-
----
-
 ## Session Rules
 
-- This file is authoritative for agent behavior in this repository.
-- Changes to this file require restarting the Claude Code session to take effect.
+- This file and `.cursor\rules\00-core.mdc` are authoritative for agent behavior in this repository.
+- Changes to AGENT.md require restarting the Claude Code session to take effect.
+- Changes to 00-core.mdc apply immediately upon reload.
