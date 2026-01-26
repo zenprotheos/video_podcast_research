@@ -6,7 +6,9 @@
 
 ## Overview
 
-This master plan organizes 6 independent build plans that address UI/UX issues, workflow logic, and functionality improvements in the YouTube Search tool. Each build plan is designed to be executed and tested independently to avoid complex debugging loops.
+This master plan organizes build plans that address UI/UX issues, workflow logic, and functionality improvements in the YouTube Search tool. Each build plan is designed to be executed and tested independently to avoid complex debugging loops.
+
+**IMPORTANT UPDATE (2026-01-26):** Build Plan 3 has been replaced by Build Plan 4 (Step 2/3 Restructure) which addresses autofill issues and workflow improvements comprehensively.
 
 ## Build Plan Structure
 
@@ -14,10 +16,10 @@ This master plan organizes 6 independent build plans that address UI/UX issues, 
 graph TD
     A[Master Build Plan] --> B[Build Plan 1: Step 0 UI/UX]
     A --> C[Build Plan 2: Step 1 Execution Mode]
-    A --> D[Build Plan 3: Step 2 Simplification]
-    A --> E[Build Plan 4: AI Filter Documentation & Logic]
-    A --> F[Build Plan 5: Model Configuration]
-    A --> G[Build Plan 6: Copy Button Functionality]
+    A --> D[Build Plan 4: Step 2/3 Restructure]
+    A --> E[Build Plan 5: AI Filter Documentation]
+    A --> F[Build Plan 6: Model Configuration]
+    A --> G[Build Plan 7: Copy Button Functionality]
     
     B --> B1[Add user tip]
     B --> B2[Remove Clear button]
@@ -27,8 +29,10 @@ graph TD
     C --> C1[Auto-select planned mode]
     C --> C2[Hide irrelevant options]
     
-    D --> D1[Autofill filter prompt]
-    D --> D2[Consider Step 2 removal]
+    D --> D1[Move Research Filter to Step 3]
+    D --> D2[Button-triggered Autofill]
+    D --> D3[Remove redundant checkbox]
+    D --> D4[Create Step 4 for Actions]
     
     E --> E1[Create UML doc]
     E --> E2[Implement redo logic]
@@ -42,14 +46,18 @@ graph TD
 
 ## Build Plan Execution Order
 
-**Recommended execution order** (can be done in parallel if no dependencies):
+**Current Phase: NOW** - Build Plan 4 should be executed immediately to fix autofill and restructure workflow.
 
-1. **Build Plan 1: Step 0 UI/UX Improvements** - Foundation UI changes
-2. **Build Plan 2: Step 1 Search Execution Mode Logic** - Workflow logic improvements
-3. **Build Plan 3: Step 2 Simplification & Auto-fill** - Depends on understanding Step 0 structure
-4. **Build Plan 4: AI Filter Process Documentation & Logic** - Independent documentation + logic
-5. **Build Plan 5: Model Configuration Fixes** - Independent bug fix
-6. **Build Plan 6: Copy Button Functionality** - Independent UX improvement
+**Recommended execution order:**
+
+1. **Build Plan 1: Step 0 UI/UX Improvements** - Foundation UI changes ✅
+2. **Build Plan 2: Step 1 Search Execution Mode Logic** - Workflow logic improvements ✅
+3. **🔄 Build Plan 4: Step 2/3 Workflow Restructure & Autofill Fix** - **CURRENT PRIORITY** - Comprehensive fix for autofill and workflow
+4. **Build Plan 5: AI Filter Process Documentation & Logic** - Independent documentation + logic (may need updates after Build Plan 4)
+5. **Build Plan 6: Model Configuration Fixes** - Independent bug fix
+6. **Build Plan 7: Copy Button Functionality** - Independent UX improvement (buttons moved to Step 4 in Build Plan 4)
+
+**Note:** Build Plan 3 (Step 2 Simplification) is **OBSOLETE** and replaced by Build Plan 4.
 
 ## Key Principles
 
@@ -72,17 +80,26 @@ graph TD
 - Single query: shows search input field + "Search YouTube" button
 - Planned queries: shows info message + "Run planned queries" button
 
-### Step 2: AI Research Configuration
-- User can enter research context
-- Enable/disable AI filtering
-- Select AI model (presets or custom)
-- Currently shows even when research prompt already provided in Step 0
-
-### Step 3: Results & Actions
+### Step 2: Results & Actions (NEW STRUCTURE)
 - Display search results in tables
-- AI filtering button (if enabled)
-- Copy buttons (URLs, IDs, JSON) - currently requires two clicks
-- Send to transcript tool
+- Show URLs/IDs in results
+- Selection checkboxes (Select All/Clear All)
+- Pagination controls
+- **Note:** Filter and Copy buttons moved to later steps
+
+### Step 3: AI Research Filter (NEW STRUCTURE - MOVED FROM OLD STEP 2)
+- "Autofill Research Context from Step 0" button (button-triggered, fixes autofill issues)
+- Research context text area (editable after autofill)
+- AI model selection (presets or custom)
+- "Filter Videos with AI" button (enabled when research context has content)
+- Shows filtered results status
+
+### Step 4: Final Actions (NEW STEP)
+- Copy URLs button
+- Copy IDs button
+- Copy JSON button
+- Send to Transcript Tool button
+- Clear labels showing what will be copied/sent (All/Selected/Shortlisted)
 
 ## Success Criteria
 

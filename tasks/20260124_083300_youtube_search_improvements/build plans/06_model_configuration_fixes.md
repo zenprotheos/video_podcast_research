@@ -1,4 +1,4 @@
-# Build Plan 5: Model Configuration Fixes
+# Build Plan 6: Model Configuration Fixes
 
 **Status:** Pending  
 **Estimated Complexity:** Low  
@@ -20,7 +20,7 @@
 
 ## Implementation Tasks
 
-### Task 5.1: Debug Custom Model Syntax Issue
+### Task 6.1: Debug Custom Model Syntax Issue
 - [ ] Investigate why custom models fail
 - [ ] Check model validation logic in `video_filter.py` (Lines ~52-54)
 - [ ] Check model format validation in UI (Lines ~944-948 in `01_YouTube_Search.py`)
@@ -30,7 +30,7 @@
   - API call format
   - Model name parsing
 
-### Task 5.2: Fix Custom Model Handling
+### Task 6.2: Fix Custom Model Handling
 - [ ] Ensure custom model input is properly stripped and validated
 - [ ] Fix any syntax/parsing issues
 - [ ] Test with various model formats:
@@ -39,7 +39,7 @@
   - `openai/gpt-4o-mini` ✓
   - Invalid formats should show clear error
 
-### Task 5.3: Update Model Presets
+### Task 6.3: Update Model Presets
 - [ ] Update preset list in Step 0 (query planner):
   - Change order: `openai/gpt-5-nano`, `anthropic/claude-haiku-4.5`, `meta-llama/llama-3.2-3b-instruct`, `Custom`
   - Update default selection logic

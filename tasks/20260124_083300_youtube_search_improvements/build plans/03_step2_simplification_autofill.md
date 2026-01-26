@@ -1,6 +1,7 @@
 # Build Plan 3: Step 2 Simplification & Auto-fill
 
-**Status:** Pending  
+**Status:** ⚠️ **OBSOLETE - REPLACED BY BUILD PLAN 4**  
+**Replaced By:** `04_step2_restructure_workflow.md`  
 **Estimated Complexity:** Medium  
 **Dependencies:** Build Plan 1 (for required terms integration)  
 **Related Feedback Items:** #3, #5

@@ -1,8 +1,8 @@
-# Build Plan 6: Copy Button Functionality
+# Build Plan 7: Copy Button Functionality
 
 **Status:** Pending  
 **Estimated Complexity:** Low  
-**Dependencies:** None  
+**Dependencies:** Build Plan 4 (Step 2/3 Restructure) - buttons moved to Step 4, may need updates  
 **Related Feedback Items:** #10
 
 ## Objective
@@ -19,24 +19,24 @@ Fix copy buttons to copy data immediately on click, without requiring a second c
 
 ## Implementation Tasks
 
-### Task 6.1: Implement Immediate Clipboard Copy
+### Task 7.1: Implement Immediate Clipboard Copy
 - [ ] Use Streamlit's clipboard functionality or `pyperclip` library
 - [ ] On button click, immediately copy data to clipboard
 - [ ] Remove the `st.code()` display (or keep as optional visual feedback)
 - [ ] Show success message immediately after copy
 
-### Task 6.2: Update All Copy Buttons
+### Task 7.2: Update All Copy Buttons
 - [ ] "Copy URLs" button (Line ~1178)
 - [ ] "Copy IDs" button (Line ~1185)
 - [ ] "Copy as JSON" button (Line ~1192)
 - [ ] Ensure all three buttons work the same way
 
-### Task 6.3: Improve Feedback Messages
+### Task 7.3: Improve Feedback Messages
 - [ ] Success: "✓ Copied X URLs to clipboard" (clear, immediate)
 - [ ] Error: "Failed to copy to clipboard" (if copy fails)
 - [ ] Remove confusing "select and copy the code block above" message
 
-### Task 6.4: Add Error Handling
+### Task 7.4: Add Error Handling
 - [ ] Handle clipboard errors gracefully
 - [ ] Fallback: If clipboard fails, show code block as before (with instructions)
 - [ ] Log errors for debugging

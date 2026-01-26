@@ -1,8 +1,8 @@
-# Build Plan 4: AI Filter Process Documentation & Redo Logic
+# Build Plan 5: AI Filter Process Documentation & Redo Logic
 
 **Status:** Pending  
 **Estimated Complexity:** Medium-High  
-**Dependencies:** None (but integrates with Build Plan 3)  
+**Dependencies:** Build Plan 4 (Step 2/3 Restructure) - may need updates after workflow changes  
 **Related Feedback Items:** #6, #9
 
 ## Objective
@@ -18,7 +18,7 @@
 
 ## Implementation Tasks
 
-### Task 4.1: Create UML Documentation
+### Task 5.1: Create UML Documentation
 - [ ] Create UML sequence diagram showing AI filter process
 - [ ] Document:
   - How videos are batched (batch_size = 10)
@@ -28,7 +28,7 @@
 - [ ] Include explanation of efficiency optimizations
 - [ ] File location: `tasks/20260124_083300_youtube_search_improvements/ai_filter_process_uml.md`
 
-### Task 4.2: Implement Redo/Retry Logic
+### Task 5.2: Implement Redo/Retry Logic
 - [ ] After AI filtering completes, allow user to:
   - Update the filter prompt
   - Click "Filter Videos with AI" again
@@ -37,13 +37,13 @@
 - [ ] Clear previous filtered results when starting new filter
 - [ ] Show clear UI: "Filtering will use the original search results, not the current filtered list"
 
-### Task 4.3: Add Redo UI Elements
+### Task 5.3: Add Redo UI Elements
 - [ ] After filtering, show option to "Update filter prompt and redo"
 - [ ] Or: Allow editing research context in Step 2, then re-filter
 - [ ] Clear visual indication that redo uses original results
 - [ ] Consider: "Reset filter" button to clear filtered results
 
-### Task 4.4: Preserve Original Results
+### Task 5.4: Preserve Original Results
 - [ ] Ensure `st.session_state.search_results` is never modified by filtering
 - [ ] Filtering creates new `st.session_state.filtered_results` object
 - [ ] Original results remain available for re-filtering

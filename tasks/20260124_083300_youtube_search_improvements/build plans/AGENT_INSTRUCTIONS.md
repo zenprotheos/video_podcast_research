@@ -123,13 +123,13 @@ class FilteringResult:
 - `st.session_state.search_results` - `SearchResult` object (or None)
 - `st.session_state.search_filters` - Filter dictionary
 
-**AI Research Configuration (Step 2):**
+**AI Research Filter (Step 3):**
 - `st.session_state.research_context` - Research goal/context text
-- `st.session_state.ai_filtering_enabled` - Boolean toggle
+- `st.session_state.ai_filtering_enabled` - Boolean toggle (may be removed in Build Plan 4)
 - `st.session_state.selected_model` - OpenRouter model identifier
 - `st.session_state.filtered_results` - `FilteringResult` object (or None)
 
-**Results & Actions (Step 3):**
+**Results & Actions (Step 2):**
 - `st.session_state.selected_video_ids` - Set of selected video IDs
 - `st.session_state.selection_update_counter` - Counter for UI updates
 - `st.session_state.planned_query_runs` - List of run data for planned queries
@@ -145,13 +145,14 @@ class FilteringResult:
 
 ## YouTube Search Workflow
 
-### Current 4-Step Workflow
+### Current 5-Step Workflow (Updated 2026-01-26)
 
 ```mermaid
 graph LR
     A[Step 0: Query Planning] --> B[Step 1: Search Execution]
-    B --> C[Step 2: AI Research Config]
-    C --> D[Step 3: Results & Actions]
+    B --> C[Step 2: Results & Actions]
+    C --> D[Step 3: AI Research Filter]
+    D --> E[Step 4: Final Actions]
     
     A --> A1[Research Prompt]
     A --> A2[Generate Queries]
@@ -160,13 +161,19 @@ graph LR
     B --> B1[Single Query]
     B --> B2[Planned Queries]
     
-    C --> C1[Research Context]
-    C --> C2[Enable AI Filter]
-    C --> C3[Select Model]
+    C --> C1[View Results Tables]
+    C --> C2[Show URLs/IDs]
+    C --> C3[Selection Checkboxes]
     
-    D --> D1[View Results]
-    D --> D2[AI Filter]
-    D --> D3[Copy/Send]
+    D --> D1[Autofill Button]
+    D --> D2[Research Context]
+    D --> D3[Model Selection]
+    D --> D4[Filter Videos]
+    
+    E --> E1[Copy URLs]
+    E --> E2[Copy IDs]
+    E --> E3[Copy JSON]
+    E --> E4[Send Transcript]
 ```
 
 ### Step 0: Query Planning (Optional)
@@ -192,23 +199,34 @@ graph LR
   - Search YouTube button (for single mode)
   - Run planned queries button (for planned mode)
 
-### Step 2: AI Research Configuration
-- **Location:** Lines ~896-966 in `01_YouTube_Search.py`
-- **Purpose:** Configure AI filtering for results
-- **Key UI Elements:**
-  - Research context text area
-  - Enable AI filtering checkbox
-  - Model selection (presets or custom)
-- **Note:** Should auto-fill from Step 0 (Build Plan 3)
-
-### Step 3: Results & Actions
-- **Location:** Lines ~969-1308 in `01_YouTube_Search.py`
-- **Purpose:** Display results and provide actions
+### Step 2: Results & Actions (UPDATED STRUCTURE)
+- **Location:** Lines ~1057-1220 in `01_YouTube_Search.py` (after Build Plan 4)
+- **Purpose:** Display search results in tables
 - **Key UI Elements:**
   - Results tables (with tabs for planned queries)
-  - Filter Videos with AI button
-  - Copy buttons (URLs, IDs, JSON) - to be fixed in Build Plan 6
+  - Selection checkboxes (Select All/Clear All)
+  - Pagination controls
+- **Note:** Filter and Copy buttons moved to later steps (Build Plan 4)
+
+### Step 3: AI Research Filter (NEW STRUCTURE - MOVED FROM OLD STEP 2)
+- **Location:** New section after Step 2 (Build Plan 4)
+- **Purpose:** Configure and execute AI filtering
+- **Key UI Elements:**
+  - "Autofill Research Context from Step 0" button (button-triggered, fixes autofill)
+  - Research context text area (editable after autofill)
+  - Model selection (presets or custom)
+  - "Filter Videos with AI" button (enabled when research_context has content)
+- **Note:** Replaces old Step 2, moved after results are shown (Build Plan 4)
+
+### Step 4: Final Actions (NEW STEP)
+- **Location:** New section after Step 3 (Build Plan 4)
+- **Purpose:** Copy data and send to transcript tool
+- **Key UI Elements:**
+  - Copy URLs button
+  - Copy IDs button
+  - Copy JSON button
   - Send to Transcript Tool button
+- **Note:** Buttons moved from old Step 3, organized in dedicated step (Build Plan 4)
 
 ---
 
@@ -447,7 +465,9 @@ if st.button("Action", key="unique_key"):
 
 ### Build Plans
 - **Master plan:** `build plans/MASTER_BUILD_PLAN.md`
-- **Individual plans:** `build plans/01_*.md` through `06_*.md`
+- **Individual plans:** `build plans/01_*.md` through `07_*.md`
+- **Current Priority:** Build Plan 4 (Step 2/3 Restructure) - fixes autofill and workflow
+- **Obsolete:** Build Plan 3 (replaced by Build Plan 4)
 
 ---
 
