@@ -20,11 +20,19 @@ Improve the YouTube search workflow with query planning, configurable results pe
 - Re-ran required syntax checks after updates.
 - Drafted UI/UX strategy for planned query results visibility.
 - Implemented Step 3 planned query experience (summary cards, tabs, status strips, per-query tables, caps, retry, and progress tracker).
+- **Fixed critical bug: Query source merging during aggregation** (2026-01-26)
+  - Fixed aggregation logic to merge `query_sources` when duplicate videos are found
+  - Applied fix to both planned query execution and retry function
+  - Added validation logging after aggregation
+  - Added user feedback showing query breakdown in action buttons area
+  - Added metadata validation before sending to transcript tool
+  - All syntax checks passed
 
 ## In Progress
-- Validating the new Step 3 telemetry flow through UI checks and automated smoke tests.
+- Testing the query source merging fix with multiple queries and overlapping results.
 
 ## Open Issues
+- None currently.
 
 ## Next Actions
-- Validate Step 3 per-query results experience end-to-end and document any follow-up tweaks.
+- Test the fix end-to-end: execute 5 planned queries, apply AI filtering, verify "Send Shortlisted" includes videos from all queries.

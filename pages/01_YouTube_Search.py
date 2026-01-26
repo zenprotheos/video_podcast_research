@@ -19,7 +19,7 @@ from src.bulk_transcribe.youtube_search import (
 from src.bulk_transcribe.video_filter import filter_videos_by_relevance, FilteringResult
 from src.bulk_transcribe.query_planner import plan_search_queries
 from src.bulk_transcribe.direct_input import parse_direct_input, create_search_result_from_items, DirectInputResult
-from src.bulk_transcribe.metadata_transfer import video_search_item_to_dict
+from src.bulk_transcribe.metadata_transfer import video_search_item_to_dict, validate_metadata_list
 
 
 # Helper Functions
@@ -72,7 +72,7 @@ def _display_results_table(items, search_result, title_suffix="", show_checkboxe
                     with cols[col_idx]:
                         checkbox_key = f"{prefix}_select_{item.video_id}_{st.session_state.selection_update_counter}"
                         new_state = st.checkbox(
-                            "",
+                            f"Select {item.title[:50]}",
                             value=item.video_id in st.session_state.selected_video_ids,
                             key=checkbox_key,
                             label_visibility="collapsed",
@@ -246,6 +246,21 @@ def _filter_results_by_query(items, query_text: str):
     return filtered
 
 
+def _get_query_source_breakdown(items):
+    """
+    Analyze query source distribution in a list of videos.
+    
+    Returns:
+        dict mapping query text to count of videos from that query
+    """
+    breakdown = {}
+    for item in items:
+        sources = getattr(item, "query_sources", []) or []
+        for source in sources:
+            breakdown[source] = breakdown.get(source, 0) + 1
+    return breakdown
+
+
 def _retry_planned_query(query_index: int):
     planned_queries = st.session_state.planned_queries[: st.session_state.planned_queries_to_run]
     if query_index >= len(planned_queries):
@@ -292,6 +307,17 @@ def _retry_planned_query(query_index: int):
                     if item.video_id not in seen_video_ids:
                         aggregated_items.append(item)
                         seen_video_ids.add(item.video_id)
+                    else:
+                        # Merge query_sources for duplicate videos
+                        existing_item = next(
+                            (x for x in aggregated_items if x.video_id == item.video_id),
+                            None
+                        )
+                        if existing_item:
+                            # Merge query_sources, avoiding duplicates
+                            existing_sources = set(existing_item.query_sources or [])
+                            new_sources = set(item.query_sources or [])
+                            existing_item.query_sources = sorted(list(existing_sources | new_sources))
                 page_token = search_result.next_page_token
                 if not page_token:
                     break
@@ -799,6 +825,17 @@ if (
                             if item.video_id not in seen_video_ids:
                                 aggregated_items.append(item)
                                 seen_video_ids.add(item.video_id)
+                            else:
+                                # Merge query_sources for duplicate videos
+                                existing_item = next(
+                                    (x for x in aggregated_items if x.video_id == item.video_id),
+                                    None
+                                )
+                                if existing_item:
+                                    # Merge query_sources, avoiding duplicates
+                                    existing_sources = set(existing_item.query_sources or [])
+                                    new_sources = set(item.query_sources or [])
+                                    existing_item.query_sources = sorted(list(existing_sources | new_sources))
                         page_token = search_result.next_page_token
                         if not page_token:
                             break
@@ -809,6 +846,22 @@ if (
 
                 progress_bar.progress(1.0)
                 status_text.write("Search complete. Preparing results.")
+
+                # Validate aggregation: count videos per query source
+                query_source_counts = {}
+                for item in aggregated_items:
+                    sources = getattr(item, "query_sources", []) or []
+                    for source in sources:
+                        query_source_counts[source] = query_source_counts.get(source, 0) + 1
+
+                # Log validation (for debugging)
+                if len(planned_queries) > 1:
+                    missing_queries = [q for q in planned_queries if q not in query_source_counts]
+                    if missing_queries:
+                        st.warning(
+                            f"Note: {len(missing_queries)} query(s) returned no unique results: "
+                            f"{', '.join(missing_queries[:3])}{'...' if len(missing_queries) > 3 else ''}"
+                        )
 
                 combined_result = SearchResult(
                     items=aggregated_items,
@@ -1098,6 +1151,27 @@ if st.session_state.search_results:
             action_videos = st.session_state.filtered_results.relevant_videos
             action_source = "youtube_search_filtered"
             action_label = "Shortlisted"
+            
+            # Validate filtered results contain videos from all queries
+            if len(st.session_state.planned_queries) > 1:
+                filtered_breakdown = _get_query_source_breakdown(action_videos)
+                all_queries = set(st.session_state.planned_queries[:st.session_state.planned_queries_to_run])
+                filtered_queries = set(filtered_breakdown.keys())
+                missing_in_filtered = all_queries - filtered_queries
+                if missing_in_filtered:
+                    st.info(
+                        f"Note: Filtered results contain videos from {len(filtered_queries)} of {len(all_queries)} queries. "
+                        f"Some queries may have had no relevant videos after AI filtering."
+                    )
+
+        # Show query source breakdown for user feedback
+        if action_videos and len(st.session_state.planned_queries) > 1:
+            breakdown = _get_query_source_breakdown(action_videos)
+            if breakdown:
+                query_summary = ", ".join([f"Q{i+1}: {count}" for i, (query, count) in enumerate(sorted(breakdown.items(), key=lambda x: -x[1])[:5])])
+                if len(breakdown) > 5:
+                    query_summary += f" (+{len(breakdown) - 5} more)"
+                st.caption(f"Query distribution: {query_summary}")
 
         action_key_prefix = "step3_actions"
         with col1:
@@ -1136,10 +1210,26 @@ if st.session_state.search_results:
             if st.button(f"Send {action_label} to Transcript Tool", key=f"{action_key_prefix}_send_transcript", type="primary", use_container_width=True):
                 urls = [item.video_url for item in action_videos]
                 metadata_list = [video_search_item_to_dict(item) for item in action_videos]
-                st.session_state['transcript_urls'] = urls
-                st.session_state['transcript_metadata'] = metadata_list
-                st.session_state['transcript_source'] = action_source
-                st.success(f"Prepared {len(urls)} {action_label.lower()} videos for transcription with rich metadata")
+                
+                # Validate metadata before storing
+                is_valid, errors = validate_metadata_list(metadata_list)
+                if not is_valid:
+                    st.error(f"Metadata validation failed: {', '.join(errors[:3])}")
+                    if len(errors) > 3:
+                        st.caption(f"... and {len(errors) - 3} more errors")
+                else:
+                    # Show query breakdown in success message
+                    if len(st.session_state.planned_queries) > 1:
+                        breakdown = _get_query_source_breakdown(action_videos)
+                        unique_queries = len(breakdown)
+                        query_info = f" from {unique_queries} query{'ies' if unique_queries != 1 else ''}"
+                    else:
+                        query_info = ""
+                    
+                    st.session_state['transcript_urls'] = urls
+                    st.session_state['transcript_metadata'] = metadata_list
+                    st.session_state['transcript_source'] = action_source
+                    st.success(f"Prepared {len(urls)} {action_label.lower()} videos{query_info} for transcription with rich metadata")
                 st.page_link(
                     "pages/02_Bulk_Transcribe.py",
                     label="Go to Transcript Tool",
