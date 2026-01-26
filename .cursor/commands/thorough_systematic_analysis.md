@@ -10,7 +10,7 @@ tags: ["cursor-command", "analysis", "problem-solving", "systematic-approach"]
 
 GOAL: Execute thorough systematic analysis of any complex problem requiring optimal, secure, and reliable solutions through comprehensive questioning, element mapping, and strategic solution planning, extending task UML architecture docs and maintaining docs/specs alignment.
 
-CONTEXT: Follows VoiceScribeAI SOP v2025-09-23 from docs/rules/SOP_AGENT.md; uses MAIN_APP_STRUCTURE.md for codebase awareness; applies frontmatter compliance validation; leverages Context7 MCP tools for documentation research; implements temp file management per Windows 11 rules; extends MASTER_Architecture_UMLs_*.md in task directories; maintains docs/specs as source of truth.
+CONTEXT: extends MASTER_Architecture_UMLs_*.md in task directories; maintains docs/specs as source of truth.
 
 RULES: MUST read and extend task UML architecture docs for complete accuracy; MUST reference docs/specs to prevent drift/duplication; MUST analyze all available data to avoid redundancies; MUST identify slight nuances as new information; MUST consider inputs/outputs/mapping across codebase; MUST provide concrete implementation steps; FORBID generic advice without specific evidence; FORBID solutions without verification; FORBID template-only outputs.
 

@@ -1,6 +1,6 @@
 """YouTube Data API v3 search functionality."""
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from googleapiclient.discovery import build
@@ -20,6 +20,9 @@ class VideoSearchItem:
     thumbnail_high_url: str
     video_url: str
     raw_data: Dict[str, Any]  # Store full API response snippet
+    query_id: Optional[str] = None
+    query_text: Optional[str] = None
+    query_sources: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -106,7 +109,7 @@ def search_youtube(
         # Parse response
         items = []
         for item in response.get('items', []):
-            search_item = parse_search_item(item)
+            search_item = parse_search_item(item, query_text=query)
             if search_item:
                 items.append(search_item)
 
@@ -129,7 +132,11 @@ def search_youtube(
         raise Exception(f"YouTube search failed: {str(e)}") from e
 
 
-def parse_search_item(item: Dict[str, Any]) -> Optional[VideoSearchItem]:
+def parse_search_item(
+    item: Dict[str, Any],
+    query_text: Optional[str] = None,
+    query_id: Optional[str] = None,
+) -> Optional[VideoSearchItem]:
     """
     Parse a single YouTube search result item.
 
@@ -171,7 +178,10 @@ def parse_search_item(item: Dict[str, Any]) -> Optional[VideoSearchItem]:
             thumbnail_url=thumbnail_url,
             thumbnail_high_url=thumbnail_high_url,
             video_url=video_url,
-            raw_data=snippet  # Store full snippet for future use
+            raw_data=snippet,  # Store full snippet for future use
+            query_id=query_id,
+            query_text=query_text,
+            query_sources=[query_text] if query_text else [],
         )
 
     except Exception:

@@ -20,6 +20,9 @@ def video_search_item_to_dict(item: VideoSearchItem) -> Dict[str, Any]:
         'thumbnail_high_url': item.thumbnail_high_url,
         'video_url': item.video_url,
         'raw_data': item.raw_data,
+        'query_id': item.query_id,
+        'query_text': item.query_text,
+        'query_sources': item.query_sources,
     }
 
 
@@ -36,6 +39,9 @@ def dict_to_video_search_item(data: Dict[str, Any]) -> VideoSearchItem:
         thumbnail_high_url=data.get('thumbnail_high_url', ''),
         video_url=data.get('video_url', ''),
         raw_data=data.get('raw_data', {}),
+        query_id=data.get('query_id'),
+        query_text=data.get('query_text'),
+        query_sources=data.get('query_sources', []),
     )
 
 
