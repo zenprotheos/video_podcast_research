@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(dir:*)",
-      "Bash(powershell.exe:*)"
+      "Bash(powershell.exe:*)",
+      "Bash(git add:*)"
     ]
   }
 }
