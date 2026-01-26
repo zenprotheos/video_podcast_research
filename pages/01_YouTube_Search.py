@@ -364,6 +364,20 @@ def _render_query_progress(summary_data: dict):
                     st.session_state.focused_query_tab = idx + 1
 
 
+def _autofill_research_context():
+    """Combine Step 0 data (prompt, notes, required_terms) into research context."""
+    parts = []
+    if st.session_state.get('query_planner_prompt', '').strip():
+        parts.append(st.session_state.query_planner_prompt.strip())
+    if st.session_state.get('query_planner_notes', '').strip():
+        parts.append(f"Additional guidance: {st.session_state.query_planner_notes.strip()}")
+    if st.session_state.get('required_terms', '').strip():
+        parts.append(f"Required terms in title/description: {st.session_state.required_terms.strip()}")
+    if parts:
+        return "\n\n".join(parts)
+    return None
+
+
 # Configuration
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_DATA_API_KEY", "").strip()
 if not YOUTUBE_API_KEY:
@@ -439,7 +453,6 @@ if 'selection_update_counter' not in st.session_state:
 
 # Initialize UI variables (needed for conditional rendering)
 research_context = st.session_state.research_context
-ai_filtering_enabled = st.session_state.ai_filtering_enabled
 selected_model = st.session_state.selected_model
 
 # Input Mode Selection
@@ -937,92 +950,12 @@ if (
 
 st.divider()
 
-# This section has been moved to Step 1 above
-
-# Step 2: Research Configuration (only show after data is loaded)
-if st.session_state.search_results is not None:
-    research_configured = st.session_state.research_context.strip() or st.session_state.ai_filtering_enabled
-    st.header("Step 2: Configure AI Research (Optional)")
-
-    with st.expander("AI Research Context & Filtering", expanded=True):
-        research_context = st.text_area(
-            "Research Context/Goal:",
-            value=st.session_state.research_context,
-            height=80,
-            placeholder="Describe your research goal or context (optional, but recommended for AI filtering). For example: 'Finding videos about AI entrepreneurship and startup strategies for 2026'",
-            help="This context helps the AI understand what you're researching, enabling smarter video filtering"
-        )
-
-        # AI Filtering Toggle
-        ai_filtering_enabled = st.checkbox(
-            "Enable AI Filtering",
-            value=st.session_state.ai_filtering_enabled,
-            help="Use AI to automatically filter videos based on relevance to your research context"
-        )
-
-        # Model Selection (only when AI filtering is enabled)
-        if ai_filtering_enabled:
-            col1, col2 = st.columns([3, 1])
-
-            with col1:
-                model_options = ["openai/gpt-4o-mini", "anthropic/claude-haiku-4.5", "meta-llama/llama-3.2-3b-instruct", "Custom"]
-                selected_model_option = st.selectbox(
-                    "AI Model:",
-                    model_options,
-                    index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
-                        help="Choose the AI model for video relevance filtering. Free models may have limits. OpenAI models are generally reliable. See https://openrouter.ai/models for all available options."
-                )
-
-            with col2:
-                if selected_model_option == "Custom":
-                    custom_model = st.text_input(
-                        "Custom Model:",
-                        value=st.session_state.selected_model if st.session_state.selected_model not in model_options[:-1] else "",
-                        placeholder="e.g., openai/gpt-4, anthropic/claude-3-haiku",
-                        help="Enter custom OpenRouter model identifier. Must be in format 'provider/model-name'. Check https://openrouter.ai/models for available options."
-                    )
-                    selected_model = custom_model.strip()
-
-                    # Validate custom model input
-                    if not selected_model:
-                        st.error("Please enter a custom model name when selecting 'Custom'.")
-                        selected_model = OPENROUTER_DEFAULT_MODEL  # Fallback
-                    elif not "/" in selected_model:
-                        st.error("Custom model must be in format 'provider/model-name' (e.g., 'openai/gpt-4').")
-                        selected_model = OPENROUTER_DEFAULT_MODEL  # Fallback
-                    else:
-                        st.info(f"Using custom model: {selected_model}")
-                else:
-                    selected_model = selected_model_option
-        else:
-            selected_model = OPENROUTER_DEFAULT_MODEL
-
-        # Update session state
-        st.session_state.research_context = research_context
-        st.session_state.ai_filtering_enabled = ai_filtering_enabled
-        st.session_state.selected_model = selected_model
-
-    st.divider()
-else:
-    # Placeholder for when no videos are loaded yet
-    if st.session_state.input_mode == "search":
-        if st.session_state.search_execution_mode == "planned":
-            planned_queries = st.session_state.get('planned_queries', [])
-            if planned_queries and len(planned_queries) > 0:
-                st.info("Click 'Run planned queries' above to load videos, then configure AI research options.")
-            else:
-                st.info("Generate planned queries in Step 0 or enter a search query above and click 'Search YouTube' to load videos, then configure AI research options.")
-        else:
-            st.info("Enter a search query above and click 'Search YouTube' to load videos, then configure AI research options.")
-    else:
-        st.info("Paste your video data above and click 'Process Input' to load videos, then configure AI research options.")
-
 # Advanced search filters removed for simplified flow
 
-# Step 3: Results & Actions (only show when videos are loaded)
+# Step 2: Results & Actions (only show when videos are loaded)
 if st.session_state.search_results is not None:
     filtered = st.session_state.filtered_results is not None and st.session_state.filtered_results.success
-    st.header("Step 3: Results & Actions")
+    st.header("Step 2: Results & Actions")
 
     # Status indicator
     status_container = st.empty()
@@ -1101,12 +1034,6 @@ if st.session_state.search_results:
                 include_query_source=True,
                 key_prefix="combined_all_results_without_filter",
             )
-            if st.session_state.ai_filtering_enabled and not st.session_state.research_context.strip():
-                st.info(
-                    "Add research context above and click 'Filter Videos with AI' to automatically shortlist relevant videos."
-                )
-            elif st.session_state.ai_filtering_enabled and st.session_state.research_context.strip():
-                st.info("Click 'Filter Videos with AI' in the Actions section below to automatically shortlist relevant videos.")
 
         if show_filtered and search_result.items:
             col1, col2, col3 = st.columns([1, 2, 1])
@@ -1151,144 +1078,6 @@ if st.session_state.search_results:
                             except Exception as e:
                                 st.error(f"Failed to load next page: {str(e)}")
 
-        if st.session_state.ai_filtering_enabled and st.session_state.research_context.strip():
-            if st.button("Filter Videos with AI", type="secondary", use_container_width=True):
-                with st.spinner("AI is evaluating video relevance..."):
-                    try:
-                        search_results = st.session_state.search_results
-                        if search_results and hasattr(search_results, "items") and search_results.items:
-                            filter_result = filter_videos_by_relevance(
-                                videos=search_results.items,
-                                search_query=st.session_state.search_query,
-                                research_context=st.session_state.research_context.strip(),
-                                model=st.session_state.selected_model,
-                                api_key=OPENROUTER_API_KEY,
-                            )
-                            st.session_state.filtered_results = filter_result
-                        else:
-                            st.error("No videos available for filtering")
-                            filter_result = None
-                            st.session_state.filtered_results = None
-
-                        if filter_result and filter_result.success:
-                            st.success(
-                                f"Filtered {filter_result.total_processed} videos: "
-                                f"{len(filter_result.relevant_videos)} relevant, {len(filter_result.filtered_out_videos)} filtered out"
-                            )
-                            st.rerun()
-                        elif filter_result:
-                            st.error(f"Filtering failed: {filter_result.error_message}")
-                    except Exception as e:
-                        st.error(f"AI filtering error: {str(e)}")
-                        if "API key" in str(e).lower():
-                            st.info("Make sure OPENROUTER_API_KEY is set in your .env file")
-            st.divider()
-
-        col1, col2, col3, col4 = st.columns(4)
-        search_results = st.session_state.search_results
-        if search_results and hasattr(search_results, "items") and search_results.items:
-            if st.session_state.selected_video_ids:
-                action_videos = [item for item in search_results.items if item.video_id in st.session_state.selected_video_ids]
-                action_source = "youtube_search_selected"
-                action_label = "Selected"
-            else:
-                action_videos = search_results.items
-                action_source = "youtube_search"
-                action_label = "All"
-        else:
-            action_videos = []
-            action_source = "youtube_search"
-            action_label = "All"
-
-        if st.session_state.filtered_results and st.session_state.filtered_results.success:
-            action_videos = st.session_state.filtered_results.relevant_videos
-            action_source = "youtube_search_filtered"
-            action_label = "Shortlisted"
-            
-            # Validate filtered results contain videos from all queries
-            if len(st.session_state.planned_queries) > 1:
-                filtered_breakdown = _get_query_source_breakdown(action_videos)
-                all_queries = set(st.session_state.planned_queries[:st.session_state.planned_queries_to_run])
-                filtered_queries = set(filtered_breakdown.keys())
-                missing_in_filtered = all_queries - filtered_queries
-                if missing_in_filtered:
-                    st.info(
-                        f"Note: Filtered results contain videos from {len(filtered_queries)} of {len(all_queries)} queries. "
-                        f"Some queries may have had no relevant videos after AI filtering."
-                    )
-
-        # Show query source breakdown for user feedback
-        if action_videos and len(st.session_state.planned_queries) > 1:
-            breakdown = _get_query_source_breakdown(action_videos)
-            if breakdown:
-                query_summary = ", ".join([f"Q{i+1}: {count}" for i, (query, count) in enumerate(sorted(breakdown.items(), key=lambda x: -x[1])[:5])])
-                if len(breakdown) > 5:
-                    query_summary += f" (+{len(breakdown) - 5} more)"
-                st.caption(f"Query distribution: {query_summary}")
-
-        action_key_prefix = "step3_actions"
-        with col1:
-            if st.button(f"Copy {action_label} URLs", key=f"{action_key_prefix}_copy_urls", use_container_width=True):
-                urls = [item.video_url for item in action_videos]
-                urls_text = "\n".join(urls)
-                st.code(urls_text, language=None)
-                st.success(f"Copied {len(urls)} {action_label.lower()} URLs to clipboard (select and copy the code block above)")
-
-        with col2:
-            if st.button(f"Copy {action_label} IDs", key=f"{action_key_prefix}_copy_ids", use_container_width=True):
-                ids = [item.video_id for item in action_videos]
-                ids_text = ",".join(ids)
-                st.code(ids_text, language=None)
-                st.success(f"Copied {len(ids)} {action_label.lower()} video IDs to clipboard (select and copy the code block above)")
-
-        with col3:
-            if st.button(f"Copy {action_label} as JSON", key=f"{action_key_prefix}_copy_json", use_container_width=True):
-                import json
-
-                results_data = []
-                for item in action_videos:
-                    results_data.append({
-                        "video_id": item.video_id,
-                        "title": item.title,
-                        "channel_title": item.channel_title,
-                        "published_at": item.published_at,
-                        "video_url": item.video_url,
-                        "description": item.description[:200] + "..." if len(item.description) > 200 else item.description,
-                    })
-                json_text = json.dumps(results_data, indent=2, ensure_ascii=False)
-                st.code(json_text, language="json")
-                st.success(f"Copied {len(results_data)} {action_label.lower()} results as JSON to clipboard (select and copy the code block above)")
-
-        with col4:
-            if st.button(f"Send {action_label} to Transcript Tool", key=f"{action_key_prefix}_send_transcript", type="primary", use_container_width=True):
-                urls = [item.video_url for item in action_videos]
-                metadata_list = [video_search_item_to_dict(item) for item in action_videos]
-                
-                # Validate metadata before storing
-                is_valid, errors = validate_metadata_list(metadata_list)
-                if not is_valid:
-                    st.error(f"Metadata validation failed: {', '.join(errors[:3])}")
-                    if len(errors) > 3:
-                        st.caption(f"... and {len(errors) - 3} more errors")
-                else:
-                    # Show query breakdown in success message
-                    if len(st.session_state.planned_queries) > 1:
-                        breakdown = _get_query_source_breakdown(action_videos)
-                        unique_queries = len(breakdown)
-                        query_info = f" from {unique_queries} {'queries' if unique_queries != 1 else 'query'}"
-                    else:
-                        query_info = ""
-                    
-                    st.session_state['transcript_urls'] = urls
-                    st.session_state['transcript_metadata'] = metadata_list
-                    st.session_state['transcript_source'] = action_source
-                    st.success(f"Prepared {len(urls)} {action_label.lower()} videos{query_info} for transcription with rich metadata")
-                st.page_link(
-                    "pages/02_Bulk_Transcribe.py",
-                    label="Go to Transcript Tool",
-                    help="Continue to the transcript tool with selected videos"
-                )
-
     for idx, query_tab in enumerate(tabs[1:], start=0):
         query_text = planned_queries[idx]
         run_data = st.session_state.planned_query_runs[idx] if idx < len(st.session_state.planned_query_runs) else {}
@@ -1330,6 +1119,234 @@ if st.session_state.search_results:
                 st.warning("This query failed during the previous run.")
                 if st.button(f"Retry query {idx + 1}", key=f"retry_query_{idx}"):
                     _retry_planned_query(idx)
+
+# Step 3: AI Research Filter (only show when videos are loaded)
+if st.session_state.search_results is not None:
+    st.header("Step 3: AI Research Filter (Optional)")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        autofill_button = st.button(
+            "Autofill Research Context from Step 0",
+            type="secondary",
+            use_container_width=True,
+            help="Combine research prompt, guidance, and required terms from Step 0"
+        )
+    with col2:
+        if st.session_state.research_context.strip():
+            st.success("✓ Research context ready")
+        else:
+            st.info("Click autofill or enter manually")
+    
+    if autofill_button:
+        autofilled = _autofill_research_context()
+        if autofilled:
+            st.session_state.research_context = autofilled
+            st.success("Research context autofilled from Step 0 data")
+            st.rerun()
+        else:
+            st.warning("No Step 0 data available to autofill")
+    
+    # Display research context (editable)
+    research_context = st.text_area(
+        "Research Context/Goal:",
+        value=st.session_state.research_context,
+        height=100,
+        placeholder="Describe your research goal or context...",
+        help="This context helps the AI understand what you're researching"
+    )
+    st.session_state.research_context = research_context
+    
+    # Model selection
+    with st.expander("AI Model Settings", expanded=False):
+        model_options = ["openai/gpt-4o-mini", "anthropic/claude-haiku-4.5", "meta-llama/llama-3.2-3b-instruct", "Custom"]
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            selected_model_option = st.selectbox(
+                "AI Model:",
+                model_options,
+                index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
+                help="Choose the AI model for video relevance filtering. Free models may have limits. OpenAI models are generally reliable. See https://openrouter.ai/models for all available options."
+            )
+        
+        with col2:
+            if selected_model_option == "Custom":
+                custom_model = st.text_input(
+                    "Custom Model:",
+                    value=st.session_state.selected_model if st.session_state.selected_model not in model_options[:-1] else "",
+                    placeholder="e.g., openai/gpt-4, anthropic/claude-3-haiku",
+                    help="Enter custom OpenRouter model identifier. Must be in format 'provider/model-name'. Check https://openrouter.ai/models for available options."
+                )
+                selected_model = custom_model.strip()
+                
+                # Validate custom model input
+                if not selected_model:
+                    st.error("Please enter a custom model name when selecting 'Custom'.")
+                    selected_model = OPENROUTER_DEFAULT_MODEL  # Fallback
+                elif "/" not in selected_model:
+                    st.error("Custom model must be in format 'provider/model-name' (e.g., 'openai/gpt-4').")
+                    selected_model = OPENROUTER_DEFAULT_MODEL  # Fallback
+                else:
+                    st.info(f"Using custom model: {selected_model}")
+            else:
+                selected_model = selected_model_option
+        
+        st.session_state.selected_model = selected_model
+    
+    # Filter button
+    if st.button("Filter Videos with AI", type="primary", use_container_width=True, 
+                 disabled=not st.session_state.research_context.strip()):
+        with st.spinner("AI is evaluating video relevance..."):
+            try:
+                search_results = st.session_state.search_results
+                if search_results and hasattr(search_results, "items") and search_results.items:
+                    filter_result = filter_videos_by_relevance(
+                        videos=search_results.items,
+                        search_query=st.session_state.search_query,
+                        research_context=st.session_state.research_context.strip(),
+                        model=st.session_state.selected_model,
+                        api_key=OPENROUTER_API_KEY,
+                    )
+                    st.session_state.filtered_results = filter_result
+                else:
+                    st.error("No videos available for filtering")
+                    filter_result = None
+                    st.session_state.filtered_results = None
+                
+                if filter_result and filter_result.success:
+                    st.success(
+                        f"Filtered {filter_result.total_processed} videos: "
+                        f"{len(filter_result.relevant_videos)} relevant, {len(filter_result.filtered_out_videos)} filtered out"
+                    )
+                    st.rerun()
+                elif filter_result:
+                    st.error(f"Filtering failed: {filter_result.error_message}")
+            except Exception as e:
+                st.error(f"AI filtering error: {str(e)}")
+                if "API key" in str(e).lower():
+                    st.info("Make sure OPENROUTER_API_KEY is set in your .env file")
+    
+    # Show filtered results status
+    if st.session_state.filtered_results and st.session_state.filtered_results.success:
+        filtered_result = st.session_state.filtered_results
+        st.info(
+            f"AI filtered {filtered_result.total_processed} videos based on your research context. "
+            f"Found {len(filtered_result.relevant_videos)} relevant videos. "
+            f"Shortlisted results are shown in Step 2 above."
+        )
+
+# Step 4: Final Actions (only show when videos are loaded)
+if st.session_state.search_results is not None:
+    st.header("Step 4: Final Actions")
+    
+    # Determine action source
+    search_results = st.session_state.search_results
+    if search_results and hasattr(search_results, "items") and search_results.items:
+        if st.session_state.filtered_results and st.session_state.filtered_results.success:
+            action_videos = st.session_state.filtered_results.relevant_videos
+            action_source = "youtube_search_filtered"
+            action_label = "Shortlisted"
+            
+            # Validate filtered results contain videos from all queries
+            if len(st.session_state.planned_queries) > 1:
+                filtered_breakdown = _get_query_source_breakdown(action_videos)
+                all_queries = set(st.session_state.planned_queries[:st.session_state.planned_queries_to_run])
+                filtered_queries = set(filtered_breakdown.keys())
+                missing_in_filtered = all_queries - filtered_queries
+                if missing_in_filtered:
+                    st.info(
+                        f"Note: Filtered results contain videos from {len(filtered_queries)} of {len(all_queries)} queries. "
+                        f"Some queries may have had no relevant videos after AI filtering."
+                    )
+        elif st.session_state.selected_video_ids:
+            action_videos = [item for item in search_results.items if item.video_id in st.session_state.selected_video_ids]
+            action_source = "youtube_search_selected"
+            action_label = "Selected"
+        else:
+            action_videos = search_results.items
+            action_source = "youtube_search"
+            action_label = "All"
+    else:
+        action_videos = []
+        action_source = "youtube_search"
+        action_label = "All"
+    
+    # Show query source breakdown for user feedback
+    if action_videos and len(st.session_state.planned_queries) > 1:
+        breakdown = _get_query_source_breakdown(action_videos)
+        if breakdown:
+            query_summary = ", ".join([f"Q{i+1}: {count}" for i, (query, count) in enumerate(sorted(breakdown.items(), key=lambda x: -x[1])[:5])])
+            if len(breakdown) > 5:
+                query_summary += f" (+{len(breakdown) - 5} more)"
+            st.caption(f"Query distribution: {query_summary}")
+    
+    st.info(f"Actions will apply to {len(action_videos)} {action_label.lower()} video(s)")
+    
+    action_key_prefix = "step4_actions"
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        if st.button(f"Copy {action_label} URLs", key=f"{action_key_prefix}_copy_urls", use_container_width=True):
+            urls = [item.video_url for item in action_videos]
+            urls_text = "\n".join(urls)
+            st.code(urls_text, language=None)
+            st.success(f"Copied {len(urls)} {action_label.lower()} URLs to clipboard (select and copy the code block above)")
+    
+    with col2:
+        if st.button(f"Copy {action_label} IDs", key=f"{action_key_prefix}_copy_ids", use_container_width=True):
+            ids = [item.video_id for item in action_videos]
+            ids_text = ",".join(ids)
+            st.code(ids_text, language=None)
+            st.success(f"Copied {len(ids)} {action_label.lower()} video IDs to clipboard (select and copy the code block above)")
+    
+    with col3:
+        if st.button(f"Copy {action_label} as JSON", key=f"{action_key_prefix}_copy_json", use_container_width=True):
+            import json
+            
+            results_data = []
+            for item in action_videos:
+                results_data.append({
+                    "video_id": item.video_id,
+                    "title": item.title,
+                    "channel_title": item.channel_title,
+                    "published_at": item.published_at,
+                    "video_url": item.video_url,
+                    "description": item.description[:200] + "..." if len(item.description) > 200 else item.description,
+                })
+            json_text = json.dumps(results_data, indent=2, ensure_ascii=False)
+            st.code(json_text, language="json")
+            st.success(f"Copied {len(results_data)} {action_label.lower()} results as JSON to clipboard (select and copy the code block above)")
+    
+    with col4:
+        if st.button(f"Send {action_label} to Transcript Tool", key=f"{action_key_prefix}_send_transcript", type="primary", use_container_width=True):
+            urls = [item.video_url for item in action_videos]
+            metadata_list = [video_search_item_to_dict(item) for item in action_videos]
+            
+            # Validate metadata before storing
+            is_valid, errors = validate_metadata_list(metadata_list)
+            if not is_valid:
+                st.error(f"Metadata validation failed: {', '.join(errors[:3])}")
+                if len(errors) > 3:
+                    st.caption(f"... and {len(errors) - 3} more errors")
+            else:
+                # Show query breakdown in success message
+                if len(st.session_state.planned_queries) > 1:
+                    breakdown = _get_query_source_breakdown(action_videos)
+                    unique_queries = len(breakdown)
+                    query_info = f" from {unique_queries} {'queries' if unique_queries != 1 else 'query'}"
+                else:
+                    query_info = ""
+                
+                st.session_state['transcript_urls'] = urls
+                st.session_state['transcript_metadata'] = metadata_list
+                st.session_state['transcript_source'] = action_source
+                st.success(f"Prepared {len(urls)} {action_label.lower()} videos{query_info} for transcription with rich metadata")
+            st.page_link(
+                "pages/02_Bulk_Transcribe.py",
+                label="Go to Transcript Tool",
+                help="Continue to the transcript tool with selected videos"
+            )
 
 # Phase 2 Placeholder
 st.header("AI Agent Mode (Phase 2 - Coming Soon)")
