@@ -19,14 +19,12 @@ Improve the YouTube search workflow with query planning, configurable results pe
 - Captured updated UI screenshot after linear prompt update.
 - Re-ran required syntax checks after updates.
 - Drafted UI/UX strategy for planned query results visibility.
+- Implemented Step 3 planned query experience (summary cards, tabs, status strips, per-query tables, caps, retry, and progress tracker).
 
 ## In Progress
-- None.
+- Validating the new Step 3 telemetry flow through UI checks and automated smoke tests.
 
 ## Open Issues
-- None yet.
 
 ## Next Actions
-- Review existing search workflow and add configuration UI.
-- Add OpenRouter-powered query planner module.
-- Update specs and impact assessment.
+- Validate Step 3 per-query results experience end-to-end and document any follow-up tweaks.

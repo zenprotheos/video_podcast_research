@@ -28,6 +28,12 @@ Document the YouTube search workflow, including optional query planning, configu
 ### Step 3: Results & Actions
 - Results display supports selection, export, and transcript handoff.
 - When multiple queries are run, results are aggregated and de-duplicated by video ID.
+- Planned query telemetry is surfaced through:
+  - A run summary card row (total queries, counts by status, total/ deduplicated results, last update).
+  - Tabbed navigation for `All Results (combined)` plus each query, ensuring a dedicated table per query.
+  - Query status strips showing status, fetched vs requested results, pages completed, and error summaries.
+  - Query-level cap notices, collapsible progress tracker, and retry affordances for failed queries.
+  - A query source column in the aggregate table to expose which query produced each video.
 
 ## Configuration Guardrails
 - Results per request are limited to the YouTube API maximum of 50.
