@@ -408,12 +408,16 @@ if 'query_planner_prompt' not in st.session_state:
     st.session_state.query_planner_prompt = ""
 if 'query_planner_notes' not in st.session_state:
     st.session_state.query_planner_notes = ""
+if 'required_terms' not in st.session_state:
+    st.session_state.required_terms = ""
 if 'max_results_per_page' not in st.session_state:
     st.session_state.max_results_per_page = 50
 if 'max_pages_per_query' not in st.session_state:
     st.session_state.max_pages_per_query = 1
 if 'search_execution_mode' not in st.session_state:
     st.session_state.search_execution_mode = "single"
+if 'execution_mode_manually_set' not in st.session_state:
+    st.session_state.execution_mode_manually_set = False
 if 'planned_query_runs' not in st.session_state:
     st.session_state.planned_query_runs = []
 if 'focused_query_tab' not in st.session_state:
@@ -476,6 +480,14 @@ if st.session_state.input_mode == "search":
     )
     st.session_state.query_planner_notes = research_notes
 
+    required_terms = st.text_input(
+        "Required terms in title and description",
+        value=st.session_state.required_terms,
+        placeholder="e.g., machine learning, Python, tutorial",
+        help="Keywords that must appear in video titles or descriptions. These will inform both search query generation and AI filtering.",
+    )
+    st.session_state.required_terms = required_terms
+
     with st.expander("Query planning settings", expanded=False):
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -532,6 +544,10 @@ if st.session_state.input_mode == "search":
                     messages.append(
                         {"role": "user", "content": f"Additional guidance: {st.session_state.query_planner_notes.strip()}"}
                     )
+                if st.session_state.required_terms.strip():
+                    messages.append(
+                        {"role": "user", "content": f"Required terms in title/description: {st.session_state.required_terms.strip()}"}
+                    )
                 result = plan_search_queries(
                     messages=messages,
                     model=st.session_state.query_planner_model,
@@ -539,24 +555,15 @@ if st.session_state.input_mode == "search":
                     max_queries=st.session_state.query_plan_max_queries,
                 )
                 if result.success:
+                    new_text = "\n".join(result.queries)
                     st.session_state.planned_queries = result.queries
-                    st.session_state.planned_queries_text = "\n".join(result.queries)
+                    st.session_state.planned_queries_text = new_text
+                    # Clear widget key to force widget to use new value on next render
+                    if "planned_queries_text_area" in st.session_state:
+                        del st.session_state.planned_queries_text_area
                     st.success(f"Generated {len(result.queries)} queries.")
                 else:
                     st.error(f"Query planning failed: {result.error_message}")
-
-    planned_queries_text = st.text_area(
-        "Planned queries (one per line):",
-        value=st.session_state.planned_queries_text,
-        height=140,
-        help="Review and edit the planned queries. One query per line.",
-    )
-    st.session_state.planned_queries_text = planned_queries_text
-    st.session_state.planned_queries = [
-        line.strip()
-        for line in planned_queries_text.splitlines()
-        if line.strip()
-    ]
 
     if st.session_state.planned_queries:
         st.session_state.planned_queries_to_run = st.number_input(
@@ -567,11 +574,26 @@ if st.session_state.input_mode == "search":
             step=1,
             help="Limit how many planned queries to execute.",
         )
-        if st.button("Clear planned queries", use_container_width=True):
-            st.session_state.planned_queries = []
-            st.session_state.planned_queries_text = ""
-            st.session_state.planned_queries_to_run = 1
-            st.rerun()
+
+    st.info("💡 Tip: You can freely edit the search queries or add your own list here. One query per line.")
+    # Use key parameter to ensure proper widget state tracking and prevent value restoration issues
+    # The key ensures Streamlit maintains widget state independently, preventing old values from reappearing
+    planned_queries_text = st.text_area(
+        "Planned queries (one per line):",
+        value=st.session_state.planned_queries_text,
+        height=140,
+        help="Review and edit the planned queries. One query per line.",
+        key="planned_queries_text_area",
+    )
+    # Always update session state immediately to keep it in sync with widget
+    # This prevents the old value from being restored on rerun
+    st.session_state.planned_queries_text = planned_queries_text
+    # Update planned_queries list from text
+    st.session_state.planned_queries = [
+        line.strip()
+        for line in planned_queries_text.splitlines()
+        if line.strip()
+    ]
 
     st.divider()
 
@@ -608,43 +630,67 @@ with input_method_container:
         st.session_state.max_results_per_page = max_results_per_page
         st.session_state.max_pages_per_query = max_pages_per_query
 
-        st.session_state.search_execution_mode = st.radio(
+        # Auto-select planned mode if queries exist and mode hasn't been manually set
+        planned_queries = st.session_state.get('planned_queries', [])
+        has_planned_queries = planned_queries and len(planned_queries) > 0
+        
+        if (has_planned_queries 
+            and not st.session_state.execution_mode_manually_set
+            and st.session_state.search_execution_mode == "single"):
+            st.session_state.search_execution_mode = "planned"
+        
+        # If planned queries were deleted, switch back to single mode
+        if not has_planned_queries and st.session_state.search_execution_mode == "planned":
+            st.session_state.search_execution_mode = "single"
+            st.session_state.execution_mode_manually_set = False
+
+        # Radio button for execution mode
+        radio_options = ["Single query", "Planned queries"]
+        radio_index = 0 if st.session_state.search_execution_mode == "single" else 1
+        selected_mode = st.radio(
             "Search execution mode",
-            ["Single query", "Planned queries"],
-            index=0
-            if st.session_state.search_execution_mode == "single"
-            else 1,
+            radio_options,
+            index=radio_index,
             horizontal=True,
             help="Run a single query or execute the planned queries list.",
         )
-        st.session_state.search_execution_mode = (
-            "single"
-            if st.session_state.search_execution_mode == "Single query"
-            else "planned"
-        )
+        
+        # Track if user manually changed the mode
+        new_mode = "single" if selected_mode == "Single query" else "planned"
+        if new_mode != st.session_state.search_execution_mode:
+            st.session_state.execution_mode_manually_set = True
+        st.session_state.search_execution_mode = new_mode
 
-        # Search input
-        col1, col2 = st.columns([3, 1])
-
-        with col1:
-            search_query = st.text_input(
-                "Search Query:",
-                value=st.session_state.search_query,
-                placeholder="Enter YouTube search terms...",
-                help="Search for videos on YouTube"
-            )
-
-        with col2:
-            search_button = st.button("Search YouTube", type="primary", use_container_width=True)
-
+        # Conditionally render UI based on mode
         if st.session_state.search_execution_mode == "planned":
-            st.info("Planned queries will be used instead of the single query input.")
+            # Planned queries mode: show info and planned search button only
+            if has_planned_queries:
+                query_count = len(planned_queries)
+                st.info(f"Using {query_count} planned {'queries' if query_count != 1 else 'query'} from Step 0. Click below to run them.")
+            else:
+                st.warning("No planned queries available. Generate queries in Step 0 or switch to single query mode.")
+            
             planned_search_button = st.button(
                 "Run planned queries",
                 type="primary",
                 use_container_width=True,
+                disabled=not has_planned_queries,
             )
+            # Initialize variables for single query mode (not used but maintain state)
+            search_query = st.session_state.get('search_query', '')
+            search_button = False
         else:
+            # Single query mode: show search input and button
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                search_query = st.text_input(
+                    "Search Query:",
+                    value=st.session_state.get('search_query', ''),
+                    placeholder="Enter YouTube search terms...",
+                    help="Search for videos on YouTube"
+                )
+            with col2:
+                search_button = st.button("Search YouTube", type="primary", use_container_width=True)
             planned_search_button = False
 
         # Update session state
@@ -960,7 +1006,14 @@ if st.session_state.search_results is not None:
 else:
     # Placeholder for when no videos are loaded yet
     if st.session_state.input_mode == "search":
-        st.info("Enter a search query above and click 'Search YouTube' to load videos, then configure AI research options.")
+        if st.session_state.search_execution_mode == "planned":
+            planned_queries = st.session_state.get('planned_queries', [])
+            if planned_queries and len(planned_queries) > 0:
+                st.info("Click 'Run planned queries' above to load videos, then configure AI research options.")
+            else:
+                st.info("Generate planned queries in Step 0 or enter a search query above and click 'Search YouTube' to load videos, then configure AI research options.")
+        else:
+            st.info("Enter a search query above and click 'Search YouTube' to load videos, then configure AI research options.")
     else:
         st.info("Paste your video data above and click 'Process Input' to load videos, then configure AI research options.")
 
@@ -1222,7 +1275,7 @@ if st.session_state.search_results:
                     if len(st.session_state.planned_queries) > 1:
                         breakdown = _get_query_source_breakdown(action_videos)
                         unique_queries = len(breakdown)
-                        query_info = f" from {unique_queries} query{'ies' if unique_queries != 1 else ''}"
+                        query_info = f" from {unique_queries} {'queries' if unique_queries != 1 else 'query'}"
                     else:
                         query_info = ""
                     
