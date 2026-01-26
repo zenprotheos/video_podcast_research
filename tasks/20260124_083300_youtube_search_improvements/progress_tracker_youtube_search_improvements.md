@@ -18,6 +18,7 @@ Improve the YouTube search workflow with query planning, configurable results pe
 - Added workflow diagrams and dataflow notes.
 - Captured updated UI screenshot after linear prompt update.
 - Re-ran required syntax checks after updates.
+- Drafted UI/UX strategy for planned query results visibility.
 
 ## In Progress
 - None.
