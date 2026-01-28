@@ -1,6 +1,6 @@
 """YouTube Search Tool - Phase 1"""
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Optional
 
 import streamlit as st
@@ -15,6 +15,7 @@ from src.bulk_transcribe.youtube_search import (
     VideoSearchItem,
     SearchResult,
     get_search_filters_dict,
+    enrich_items_with_full_descriptions,
 )
 from src.bulk_transcribe.video_filter import filter_videos_by_relevance, FilteringResult
 from src.bulk_transcribe.query_planner import plan_search_queries
@@ -58,69 +59,65 @@ def _display_results_table(items, search_result, title_suffix="", show_checkboxe
             total_count = len(items)
             st.caption(f"{selected_count} of {total_count} videos selected")
 
-    column_weights = [0.5, 1, 4, 2, 1.5, 3, 1]
-    if include_query_source:
-        column_weights.append(1.5)
+    # Use a real tabular component so we get:
+    # - headers
+    # - horizontal scrolling when content exceeds viewport
+    # - configurable column widths (long text gets more space)
+    rows = []
+    for item in items:
+        rows.append(
+            {
+                "video_id": item.video_id,
+                "Select": item.video_id in st.session_state.selected_video_ids,
+                "Thumbnail": item.thumbnail_url or "",
+                "Title": item.title or "",
+                "Channel": item.channel_title or "",
+                "Published": (item.published_at or "")[:10],
+                "Description": item.description or "",
+                "Watch": item.video_url or "",
+                "Queries": ", ".join(getattr(item, "query_sources", []) or []),
+            }
+        )
 
-    with st.container(height=400):
-        for item in items:
-            with st.container():
-                cols = st.columns(column_weights if show_checkboxes else column_weights[1:])
-                col_idx = 0
+    df = pd.DataFrame(rows)
 
-                if show_checkboxes:
-                    with cols[col_idx]:
-                        checkbox_key = f"{prefix}_select_{item.video_id}_{st.session_state.selection_update_counter}"
-                        new_state = st.checkbox(
-                            f"Select {item.title[:50]}",
-                            value=item.video_id in st.session_state.selected_video_ids,
-                            key=checkbox_key,
-                            label_visibility="collapsed",
-                            help=f"Select {item.title[:30]}..."
-                        )
-                        if new_state:
-                            st.session_state.selected_video_ids.add(item.video_id)
-                        else:
-                            st.session_state.selected_video_ids.discard(item.video_id)
-                    col_idx += 1
+    # Hide columns depending on context
+    hidden_cols = ["video_id"]
+    if not show_checkboxes:
+        hidden_cols.append("Select")
+    if not include_query_source:
+        hidden_cols.append("Queries")
 
-                with cols[col_idx]:
-                    if item.thumbnail_url:
-                        st.image(item.thumbnail_url, width=60)
-                    else:
-                        st.write("Video")
-                col_idx += 1
+    edited = st.data_editor(
+        df,
+        key=f"{prefix}_data_editor",
+        hide_index=True,
+        height=400,
+        use_container_width=False,  # allow horizontal scrolling instead of squishing
+        disabled=not show_checkboxes,  # allow checkbox edits only when enabled
+        column_config={
+            "Select": st.column_config.CheckboxColumn("Select", width="small"),
+            "Thumbnail": st.column_config.ImageColumn("Thumb", width="small"),
+            "Title": st.column_config.TextColumn("Title", width="medium"),
+            "Channel": st.column_config.TextColumn("Channel", width="small"),
+            "Published": st.column_config.TextColumn("Published", width="small"),
+            "Description": st.column_config.TextColumn("Description", width="large"),
+            "Watch": st.column_config.LinkColumn(
+                "Watch",
+                display_text="Watch",
+                width="small",
+            ),
+            "Queries": st.column_config.TextColumn("Queries", width="large"),
+        },
+        column_order=[c for c in df.columns if c not in hidden_cols],
+    )
 
-                with cols[col_idx]:
-                    title = item.title[:60] + "..." if len(item.title) > 60 else item.title
-                    st.markdown(f"**{title}**", help=item.title)
-                col_idx += 1
-
-                with cols[col_idx]:
-                    channel = (item.channel_title or "Unknown")[:20] + "..." if len(item.channel_title or "Unknown") > 20 else (item.channel_title or "Unknown")
-                    st.text(channel, help=item.channel_title or "Unknown")
-                col_idx += 1
-
-                with cols[col_idx]:
-                    st.text(item.published_at[:10] if item.published_at else "")
-                col_idx += 1
-
-                with cols[col_idx]:
-                    desc = item.description[:80] + "..." if len(item.description) > 80 else item.description
-                    st.text(desc, help=item.description)
-                col_idx += 1
-
-                with cols[col_idx]:
-                    st.link_button("Watch", item.video_url, help=f"Watch {item.title[:30]}...")
-                col_idx += 1
-
-                if include_query_source:
-                    with cols[col_idx]:
-                        sources = getattr(item, "query_sources", []) or []
-                        st.caption(", ".join(sources) if sources else "–")
-                    col_idx += 1
-
-                st.divider()
+    if show_checkboxes and not edited.empty:
+        # Sync selection state from editor
+        new_selected = set(edited.loc[edited["Select"] == True, "video_id"].tolist())
+        if new_selected != st.session_state.selected_video_ids:
+            st.session_state.selected_video_ids = new_selected
+            st.session_state.selection_update_counter += 1
 
 
 def _get_planned_query_summary_data(search_result=None):
@@ -289,6 +286,12 @@ def _retry_planned_query(query_index: int):
 
     try:
         with st.spinner(f"Retrying Query {query_index + 1}..."):
+            published_after = None
+            published_before = None
+            if st.session_state.published_after_date and st.session_state.published_before_date:
+                published_after = _date_to_published_after(st.session_state.published_after_date)
+                published_before = _date_to_published_before(st.session_state.published_before_date)
+
             page_token = None
             for _ in range(st.session_state.max_pages_per_query):
                 search_result = search_youtube(
@@ -297,6 +300,8 @@ def _retry_planned_query(query_index: int):
                     max_results=st.session_state.max_results_per_page,
                     order='relevance',
                     type='video',
+                    published_after=published_after,
+                    published_before=published_before,
                     page_token=page_token,
                 )
                 run_data["pages_completed"] += 1
@@ -322,6 +327,11 @@ def _retry_planned_query(query_index: int):
                 if not page_token:
                     break
 
+            enrich_items_with_full_descriptions(
+                aggregated_items,
+                YOUTUBE_API_KEY,
+                st.session_state.full_description_by_id,
+            )
             run_data["status"] = "completed"
             st.session_state.search_results = SearchResult(
                 items=aggregated_items,
@@ -376,6 +386,18 @@ def _autofill_research_context():
     if parts:
         return "\n\n".join(parts)
     return None
+
+
+def _date_to_published_after(d: date) -> str:
+    # YouTube Data API expects RFC3339 timestamps.
+    # Use start-of-day UTC for publishedAfter.
+    return f"{d.isoformat()}T00:00:00Z"
+
+
+def _date_to_published_before(d: date) -> str:
+    # YouTube Data API expects RFC3339 timestamps.
+    # Use end-of-day UTC for publishedBefore.
+    return f"{d.isoformat()}T23:59:59Z"
 
 
 # Configuration
@@ -436,6 +458,18 @@ if 'planned_query_runs' not in st.session_state:
     st.session_state.planned_query_runs = []
 if 'focused_query_tab' not in st.session_state:
     st.session_state.focused_query_tab = None
+
+# Date filter session state
+if 'date_filter_mode' not in st.session_state:
+    st.session_state.date_filter_mode = "Any time"  # "Any time" | "Preset" | "Manual"
+if 'date_preset' not in st.session_state:
+    st.session_state.date_preset = "Last 6 months"
+if 'published_after_date' not in st.session_state:
+    st.session_state.published_after_date = None  # date | None
+if 'published_before_date' not in st.session_state:
+    st.session_state.published_before_date = None  # date | None
+if 'full_description_by_id' not in st.session_state:
+    st.session_state.full_description_by_id = {}  # cache for videos.list descriptions
 
 # Direct input session state
 if 'input_mode' not in st.session_state:
@@ -640,6 +674,87 @@ with input_method_container:
                 )
             st.caption("Each additional page consumes YouTube API quota.")
 
+            st.divider()
+            st.subheader("Date range")
+            date_mode = st.radio(
+                "Filter videos by publish date:",
+                ["Any time", "Rolling preset", "Manual range"],
+                index=0
+                if st.session_state.date_filter_mode == "Any time"
+                else (1 if st.session_state.date_filter_mode == "Preset" else 2),
+                horizontal=True,
+                help="Limit results to a publish date window. Presets are rolling ranges; manual lets you pick start/end dates.",
+            )
+
+            if date_mode == "Any time":
+                st.session_state.date_filter_mode = "Any time"
+                st.session_state.published_after_date = None
+                st.session_state.published_before_date = None
+            elif date_mode == "Rolling preset":
+                st.session_state.date_filter_mode = "Preset"
+                preset = st.selectbox(
+                    "Preset",
+                    ["Last 3 months", "Last 6 months", "Last 12 months"],
+                    index=["Last 3 months", "Last 6 months", "Last 12 months"].index(
+                        st.session_state.date_preset
+                        if st.session_state.date_preset in ["Last 3 months", "Last 6 months", "Last 12 months"]
+                        else "Last 6 months"
+                    ),
+                    help="Sets a rolling window ending today.",
+                )
+                st.session_state.date_preset = preset
+                months = 6
+                if preset == "Last 3 months":
+                    months = 3
+                elif preset == "Last 12 months":
+                    months = 12
+                today = date.today()
+                # Approximate months as 30-day blocks (simple, predictable UX).
+                start = today - timedelta(days=30 * months)
+                st.session_state.published_after_date = start
+                st.session_state.published_before_date = today
+
+                with st.expander("Preview / adjust", expanded=False):
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.date_input(
+                            "Start date",
+                            value=st.session_state.published_after_date,
+                            key="preset_start_date_preview",
+                            disabled=True,
+                        )
+                    with col_b:
+                        st.date_input(
+                            "End date",
+                            value=st.session_state.published_before_date,
+                            key="preset_end_date_preview",
+                            disabled=True,
+                        )
+                    st.caption("To tweak these dates, switch to Manual range.")
+            else:
+                st.session_state.date_filter_mode = "Manual"
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    start_date = st.date_input(
+                        "Start date",
+                        value=st.session_state.published_after_date or (date.today() - timedelta(days=30 * 6)),
+                        help="Inclusive. Will map to publishedAfter.",
+                    )
+                with col_b:
+                    end_date = st.date_input(
+                        "End date",
+                        value=st.session_state.published_before_date or date.today(),
+                        help="Inclusive. Will map to publishedBefore.",
+                    )
+
+                if start_date and end_date and start_date > end_date:
+                    st.warning("Start date must be on or before end date. Date filter will be ignored until fixed.")
+                    st.session_state.published_after_date = None
+                    st.session_state.published_before_date = None
+                else:
+                    st.session_state.published_after_date = start_date
+                    st.session_state.published_before_date = end_date
+
         st.session_state.max_results_per_page = max_results_per_page
         st.session_state.max_pages_per_query = max_pages_per_query
 
@@ -792,6 +907,12 @@ if (
 ):
     with st.spinner("Searching YouTube..."):
         try:
+            published_after = None
+            published_before = None
+            if st.session_state.published_after_date and st.session_state.published_before_date:
+                published_after = _date_to_published_after(st.session_state.published_after_date)
+                published_before = _date_to_published_before(st.session_state.published_before_date)
+
             # Prepare search parameters
             search_params = {
                 'query': search_query.strip(),
@@ -799,17 +920,26 @@ if (
                 'max_results': st.session_state.max_results_per_page,
                 'order': 'relevance',
                 'type': 'video',
+                'published_after': published_after,
+                'published_before': published_before,
             }
 
             # Execute search
             search_result = search_youtube(**search_params)
+            enrich_items_with_full_descriptions(
+                search_result.items,
+                YOUTUBE_API_KEY,
+                st.session_state.full_description_by_id,
+            )
 
             # Store results in session state
             st.session_state.search_results = search_result
             st.session_state.search_query = search_query
             st.session_state.current_page_token = None
             st.session_state.search_filters = get_search_filters_dict(
-                max_results=st.session_state.max_results_per_page
+                max_results=st.session_state.max_results_per_page,
+                published_after=published_after,
+                published_before=published_before,
             )
             # Clear previous selections and filtered results for new search
             st.session_state.selected_video_ids.clear()
@@ -834,6 +964,12 @@ if (
     else:
         with st.spinner("Searching YouTube with planned queries..."):
             try:
+                published_after = None
+                published_before = None
+                if st.session_state.published_after_date and st.session_state.published_before_date:
+                    published_after = _date_to_published_after(st.session_state.published_after_date)
+                    published_before = _date_to_published_before(st.session_state.published_before_date)
+
                 aggregated_items = []
                 seen_video_ids = set()
                 total_pages = st.session_state.max_pages_per_query * len(planned_queries)
@@ -869,6 +1005,8 @@ if (
                                 max_results=st.session_state.max_results_per_page,
                                 order='relevance',
                                 type='video',
+                                published_after=published_after,
+                                published_before=published_before,
                                 page_token=page_token,
                             )
                         except Exception as query_error:
@@ -904,6 +1042,12 @@ if (
                     run_data["status"] = "completed"
 
                 progress_bar.progress(1.0)
+                status_text.write("Fetching full descriptions...")
+                enrich_items_with_full_descriptions(
+                    aggregated_items,
+                    YOUTUBE_API_KEY,
+                    st.session_state.full_description_by_id,
+                )
                 status_text.write("Search complete. Preparing results.")
 
                 # Validate aggregation: count videos per query source
@@ -934,7 +1078,9 @@ if (
                 st.session_state.search_query = "; ".join(planned_queries)
                 st.session_state.current_page_token = None
                 st.session_state.search_filters = get_search_filters_dict(
-                    max_results=st.session_state.max_results_per_page
+                    max_results=st.session_state.max_results_per_page,
+                    published_after=published_after,
+                    published_before=published_before,
                 )
                 st.session_state.selected_video_ids.clear()
                 st.session_state.filtered_results = None
@@ -1049,6 +1195,11 @@ if st.session_state.search_results:
                                     "page_token": search_result.prev_page_token,
                                 })
                                 new_result = search_youtube(**search_params)
+                                enrich_items_with_full_descriptions(
+                                    new_result.items,
+                                    YOUTUBE_API_KEY,
+                                    st.session_state.full_description_by_id,
+                                )
                                 st.session_state.search_results = new_result
                                 st.session_state.current_page_token = search_result.prev_page_token
                                 st.session_state.filtered_results = None
@@ -1069,6 +1220,11 @@ if st.session_state.search_results:
                                     "page_token": search_result.next_page_token,
                                 })
                                 new_result = search_youtube(**search_params)
+                                enrich_items_with_full_descriptions(
+                                    new_result.items,
+                                    YOUTUBE_API_KEY,
+                                    st.session_state.full_description_by_id,
+                                )
                                 st.session_state.search_results = new_result
                                 st.session_state.current_page_token = search_result.next_page_token
                                 st.session_state.filtered_results = None
@@ -1235,6 +1391,43 @@ if st.session_state.search_results is not None:
             f"Found {len(filtered_result.relevant_videos)} relevant videos. "
             f"Shortlisted results are shown in Step 2 above."
         )
+        # Dev console — per-batch logs (title, description, full reason; wrap, scroll, manual height)
+        summaries = getattr(filtered_result, "batch_summaries", None)
+        if summaries:
+            with st.expander("Dev console — batch logs", expanded=False):
+                for s in summaries:
+                    bid = s.get("batch_id", "?")
+                    decisions = s.get("decisions", [])
+                    n = len(s.get("video_ids", []))
+                    r = sum(1 for d in decisions if d.get("relevant"))
+                    st.caption(f"**{bid}**: {n} videos -> {r} relevant, {n - r} out")
+                    with st.expander(f"Decisions — {bid}", expanded=False):
+                        for d in decisions:
+                            vid = d.get("video_id") or ""
+                            title = d.get("title") or ""
+                            desc = d.get("description") or ""
+                            reason = d.get("reason") or ""
+                            rel = "In" if d.get("relevant") else "Out"
+                            st.markdown(f"**{vid}** | **{rel}**")
+                            st.caption("Title")
+                            st.text(title)
+                            st.caption("Description")
+                            st.text_area(
+                                "Description",
+                                value=desc,
+                                height=80,
+                                disabled=True,
+                                key=f"dev_desc_{bid}_{vid}",
+                            )
+                            st.caption("Reason (full; wraps; scroll if long)")
+                            st.text_area(
+                                "Reason",
+                                value=reason,
+                                height=180,
+                                disabled=True,
+                                key=f"dev_reason_{bid}_{vid}",
+                            )
+                            st.divider()
 
 # Step 4: Final Actions (only show when videos are loaded)
 if st.session_state.search_results is not None:
@@ -1312,7 +1505,8 @@ if st.session_state.search_results is not None:
                     "channel_title": item.channel_title,
                     "published_at": item.published_at,
                     "video_url": item.video_url,
-                    "description": item.description[:200] + "..." if len(item.description) > 200 else item.description,
+                    # Export full description (do not truncate).
+                    "description": item.description,
                 })
             json_text = json.dumps(results_data, indent=2, ensure_ascii=False)
             st.code(json_text, language="json")

@@ -189,6 +189,53 @@ def parse_search_item(
         return None
 
 
+def enrich_items_with_full_descriptions(
+    items: List[VideoSearchItem],
+    api_key: str,
+    cache: Optional[Dict[str, str]] = None,
+) -> None:
+    """
+    Replace truncated search.list descriptions with full descriptions via videos.list.
+    Mutates each item.description in place. Updates cache with fetched descriptions
+    so reruns do not re-request (quota: 1 unit per 50 videos per request).
+    """
+    if not items:
+        return
+    cache = cache if cache is not None else {}
+    # IDs we still need to fetch (not in cache)
+    ids_to_fetch = [item.video_id for item in items if item.video_id and item.video_id not in cache]
+    if not ids_to_fetch:
+        # Hydrate from cache only
+        for item in items:
+            if item.video_id and item.video_id in cache:
+                item.description = cache[item.video_id]
+        return
+
+    try:
+        youtube = build_youtube_service(api_key)
+        for i in range(0, len(ids_to_fetch), 50):
+            batch = ids_to_fetch[i : i + 50]
+            request = youtube.videos().list(
+                part="snippet",
+                id=",".join(batch),
+                maxResults=50,
+                fields="items(id,snippet(description))",
+            )
+            response = request.execute()
+            for raw in response.get("items", []):
+                vid = raw.get("id")
+                desc = (raw.get("snippet") or {}).get("description") or ""
+                if vid:
+                    cache[vid] = desc
+
+        for item in items:
+            if item.video_id and item.video_id in cache:
+                item.description = cache[item.video_id]
+    except Exception:
+        # On failure, leave items with existing (truncated) description
+        pass
+
+
 def get_search_filters_dict(
     order: str = "relevance",
     max_results: int = 50,

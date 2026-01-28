@@ -59,6 +59,7 @@ DEVELOPMENT STANDARDS (MANDATORY REFERENCE)
   - Automated scoping analysis to prevent import errors
   - Consistent error handling and logging patterns
   - Type hints and documentation standards
+- **Streamlit Reference**: Always refer to @Streamlit Documentation when developing Streamlit-focused functionality to maintain alignment with official guidance.
 - **Session Continuity**: Use `docs/task_resume/` for complex multi-step tasks
   - Resume tasks created for session continuity
   - Document context for future AI agents

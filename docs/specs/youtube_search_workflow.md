@@ -17,6 +17,7 @@ Document the YouTube search workflow, including optional query planning, configu
 - Search configuration includes:
   - Results per request (1–50)
   - Max pages per query (pagination budget)
+  - **Date range:** Any time; rolling presets (last 3/6/12 months); or manual start/end dates, mapped to YouTube `publishedAfter` / `publishedBefore`.
 - Execution modes for search:
   - Single query
   - Planned queries (uses the query planner list)
@@ -27,6 +28,7 @@ Document the YouTube search workflow, including optional query planning, configu
 
 ### Step 3: Results & Actions
 - Results display supports selection, export, and transcript handoff.
+- **Results table:** Column widths are rebalanced so action columns (e.g. Watch, Date) remain readable. Description and query-source columns use resizable text areas (user can drag to expand). Descriptions are enriched with full text via `videos.list` after search (post-dedupe, batched, cached in session).
 - When multiple queries are run, results are aggregated and de-duplicated by video ID.
 - Planned query telemetry is surfaced through:
   - A run summary card row (total queries, counts by status, total/ deduplicated results, last update).
