@@ -25,7 +25,7 @@ REQUIRED PATHS (repo-root relative)
 
 TASK WORKSPACE (MANDATORY)
 - Naming: tasks\${DATE}_${TaskName}\
-- DATE: `powershell.exe -ExecutionPolicy Bypass -File tools/workflow_utilities/date-current.ps1 timestamp`
+- DATE (WSL default): `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/workflow_utilities/date-current.ps1 timestamp`
 - Example: tasks\20260120_143256_user_auth_cleanup\
 
 STANDARD TASK STRUCTURE (LOGICAL)
@@ -38,8 +38,8 @@ STANDARD TASK STRUCTURE (LOGICAL)
 - temp\
 - artifacts\
 
-WORKSPACE CREATION (POWERSHELL)
-- Extract DATE: `powershell.exe -ExecutionPolicy Bypass -File tools/workflow_utilities/date-current.ps1 timestamp`
+WORKSPACE CREATION (WSL / BASH DEFAULT)
+- Extract DATE (recommended, works from WSL): `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/workflow_utilities/date-current.ps1 timestamp`
 - Create task directory first
 - Create directories one-by-one only when required by file creation
 - Never pre-create empty directories

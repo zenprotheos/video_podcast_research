@@ -16,16 +16,20 @@ alwaysApply: true
 - **MANDATORY**: Expect manual intervention for MCP server process control (Ctrl+C, Task Manager, new terminal)
 - **MANDATORY**: Use temp scripts for complex operations with proper sentinels: `[[COMPLETED:<code>]]`
 
-- **STRICTLY FORBIDDEN**: No inline ||/&& in PowerShell contexts - causes parsing stalls
-- **STRICTLY FORBIDDEN**: Variables, try/catch, Invoke-WebRequest in inline PowerShell commands
-- **STRICTLY FORBIDDEN**: External executables (npx, python) in inline commands - causes stalls
-- **STRICTLY FORBIDDEN**: Complex multi-statement PowerShell without proper file-based execution
+- **PRIMARY SHELL**: WSL (bash). Use PowerShell only for Windows-only tasks (e.g., running `.ps1` utilities).
+
+- **STRICTLY FORBIDDEN (PowerShell inline)**: No inline `||`/`&&` in PowerShell contexts - causes parsing stalls
+- **STRICTLY FORBIDDEN (PowerShell inline)**: Variables, `try/catch`, `Invoke-WebRequest` in inline PowerShell commands
+- **STRICTLY FORBIDDEN (PowerShell inline)**: External executables (`npx`, `python`) in inline PowerShell commands - causes stalls
+- **STRICTLY FORBIDDEN (PowerShell inline)**: Complex multi-statement PowerShell without proper file-based execution
 - **STRICTLY FORBIDDEN**: Unicode emojis in terminal commands/output - causes encoding failures
 - **STRICTLY FORBIDDEN**: Direct file manipulation via PowerShell cmdlets (Move-Item, Copy-Item, etc.)
 
 - **REQUIRED**: Every temp script must print [[COMPLETED:<code>]] sentinels
 - **REQUIRED**: Use 10-60s timeouts for long/IO/network calls via temp scripts
-- **REQUIRED**: Use powershell.exe -NoProfile -ExecutionPolicy Bypass -File for multi-step logic
+- **REQUIRED**: Use file-based scripts for multi-step logic:
+  - **WSL default**: `bash -lc "./path/to/script.sh"` (or write a temp `.sh`)
+  - **Windows-only**: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File path\to\script.ps1`
 - **REQUIRED**: Proper quoting and spaces handling for all file paths
 - **REQUIRED**: File ops with -ErrorAction Stop and [[DONE:<action>]] sentinels
 - **REQUIRED**: Handle Python one-liners with temp scripts or explicit timeout/try-except
