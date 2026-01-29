@@ -69,7 +69,7 @@ def filter_videos_by_relevance(
             error_msg = test_result['error']
             # Suggest alternative models if the current one fails
             if "not found" in error_msg.lower():
-                error_msg += ". Try: 'openai/gpt-4o-mini', 'anthropic/claude-haiku-4.5', or 'meta-llama/llama-3.2-3b-instruct'"
+                error_msg += ". Try: 'openai/gpt-5-nano', 'anthropic/claude-haiku-4.5', or 'meta-llama/llama-3.2-3b-instruct'"
             return FilteringResult([], [], 0, False, f"API connection test failed: {error_msg}")
     except Exception as e:
         return FilteringResult([], [], 0, False, f"API connection test failed: {str(e)}")

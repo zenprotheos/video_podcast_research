@@ -37,6 +37,11 @@ Document the YouTube search workflow, including optional query planning, configu
   - Query-level cap notices, collapsible progress tracker, and retry affordances for failed queries.
   - A query source column in the aggregate table to expose which query produced each video.
 
+### Step 4: Final Actions
+- Copy URLs, Copy IDs, and Copy as JSON copy to clipboard on first click when possible (server clipboard or browser clipboard).
+- Success feedback: brief message only; the exported list is not shown unless clipboard is unavailable.
+- If clipboard is unavailable, the app shows the exported text in a code block with instructions to copy manually.
+
 ## Configuration Guardrails
 - Results per request are limited to the YouTube API maximum of 50.
 - Max pages per query limits pagination to control quota usage.

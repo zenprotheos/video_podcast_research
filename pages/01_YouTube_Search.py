@@ -1,4 +1,5 @@
 """YouTube Search Tool - Phase 1"""
+import json
 import os
 from datetime import datetime, date, timedelta
 from typing import List, Optional
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 # Load .env file if it exists
 load_dotenv()
 
+from src.bulk_transcribe.utils import try_copy_via_pyperclip
 from src.bulk_transcribe.youtube_search import (
     search_youtube,
     VideoSearchItem,
@@ -21,6 +23,27 @@ from src.bulk_transcribe.video_filter import filter_videos_by_relevance, Filteri
 from src.bulk_transcribe.query_planner import plan_search_queries
 from src.bulk_transcribe.direct_input import parse_direct_input, create_search_result_from_items, DirectInputResult
 from src.bulk_transcribe.metadata_transfer import video_search_item_to_dict, validate_metadata_list
+
+
+def _copy_to_clipboard(text: str, *, label: str, count: int, language: Optional[str] = None) -> None:
+    """
+    Copy text to clipboard: try pyperclip first, then attempt browser clipboard,
+    then show code block with manual-copy message. Only shows the text block when
+    clipboard is unavailable (last fallback).
+    """
+    if try_copy_via_pyperclip(text):
+        st.success(f"Copied {count} {label} to clipboard")
+        return
+    # Attempt browser clipboard via injected script (runs on next paint)
+    escaped = json.dumps(text)
+    html = (
+        "<script>(function(){ var t = " + escaped + ";"
+        " if (navigator.clipboard && navigator.clipboard.writeText) "
+        "navigator.clipboard.writeText(t).catch(function(){}); })();</script>"
+    )
+    st.components.v1.html(html, height=0)
+    st.info("Clipboard unavailable — please copy manually from the block below.")
+    st.code(text, language=language)
 
 
 # Helper Functions
@@ -538,18 +561,27 @@ if st.session_state.input_mode == "search":
     with st.expander("Query planning settings", expanded=False):
         col1, col2 = st.columns([3, 1])
         with col1:
-            model_options = [
+            # Order by reliability: fastest + 0 retries first (from reliability analysis)
+            preset_models = [
                 "openai/gpt-4o-mini",
+                "openai/gpt-4.1-nano",
+                "google/gemini-2.5-flash-lite",
+                "openai/gpt-5-nano",
                 "anthropic/claude-haiku-4.5",
                 "meta-llama/llama-3.2-3b-instruct",
-                "Custom",
             ]
+            model_options = preset_models + ["Custom"]
+            current_planner_model = (st.session_state.query_planner_model or "").strip()
+            if current_planner_model in preset_models:
+                planner_model_index = preset_models.index(current_planner_model)
+            elif current_planner_model:
+                planner_model_index = model_options.index("Custom")
+            else:
+                planner_model_index = 0
             selected_model_option = st.selectbox(
                 "Planner model",
                 model_options,
-                index=model_options.index(st.session_state.query_planner_model)
-                if st.session_state.query_planner_model in model_options
-                else 0,
+                index=planner_model_index,
                 help="Choose the model to generate search queries.",
             )
         with col2:
@@ -565,13 +597,23 @@ if st.session_state.input_mode == "search":
         if selected_model_option == "Custom":
             custom_model = st.text_input(
                 "Custom planner model",
-                value=st.session_state.query_planner_model
-                if st.session_state.query_planner_model not in model_options[:-1]
-                else "",
-                placeholder="e.g., openai/gpt-4, anthropic/claude-3-haiku",
+                value=current_planner_model if current_planner_model not in preset_models else "",
+                placeholder="e.g., openai/gpt-5-nano, anthropic/claude-haiku-4.5",
                 help="Enter a custom OpenRouter model identifier.",
             )
             query_planner_model = custom_model.strip()
+
+            # Validate custom model input
+            if not query_planner_model:
+                st.error("Please enter a custom model name when selecting 'Custom'.")
+                query_planner_model = OPENROUTER_DEFAULT_MODEL  # Fallback
+            elif "/" not in query_planner_model:
+                st.error(
+                    "Custom model must be in format 'provider/model-name' (e.g., 'openai/gpt-5-nano')."
+                )
+                query_planner_model = OPENROUTER_DEFAULT_MODEL  # Fallback
+            else:
+                st.info(f"Using custom planner model: {query_planner_model}")
         else:
             query_planner_model = selected_model_option
 
@@ -585,32 +627,66 @@ if st.session_state.input_mode == "search":
         elif not OPENROUTER_API_KEY:
             st.error("OpenRouter API key not configured. Set OPENROUTER_API_KEY in .env.")
         else:
-            with st.spinner("Generating search queries..."):
-                messages = [{"role": "user", "content": st.session_state.query_planner_prompt.strip()}]
-                if st.session_state.query_planner_notes.strip():
-                    messages.append(
-                        {"role": "user", "content": f"Additional guidance: {st.session_state.query_planner_notes.strip()}"}
-                    )
-                if st.session_state.required_terms.strip():
-                    messages.append(
-                        {"role": "user", "content": f"Required terms in title/description: {st.session_state.required_terms.strip()}"}
-                    )
+            messages = [{"role": "user", "content": st.session_state.query_planner_prompt.strip()}]
+            if st.session_state.query_planner_notes.strip():
+                messages.append(
+                    {"role": "user", "content": f"Additional guidance: {st.session_state.query_planner_notes.strip()}"}
+                )
+            if st.session_state.required_terms.strip():
+                messages.append(
+                    {"role": "user", "content": f"Required terms in title/description: {st.session_state.required_terms.strip()}"}
+                )
+            
+            # Live progress updates using status container
+            status_container = st.status("Initializing...", expanded=True)
+            progress_messages = []
+            
+            def progress_callback(msg: str) -> None:
+                progress_messages.append(msg)
+                # Update status container with latest message
+                with status_container:
+                    for pm in progress_messages:
+                        st.text(pm)
+            
+            with status_container:
                 result = plan_search_queries(
                     messages=messages,
                     model=st.session_state.query_planner_model,
                     api_key=OPENROUTER_API_KEY,
                     max_queries=st.session_state.query_plan_max_queries,
+                    progress_callback=progress_callback,
                 )
-                if result.success:
-                    new_text = "\n".join(result.queries)
-                    st.session_state.planned_queries = result.queries
-                    st.session_state.planned_queries_text = new_text
-                    # Clear widget key to force widget to use new value on next render
-                    if "planned_queries_text_area" in st.session_state:
-                        del st.session_state.planned_queries_text_area
-                    st.success(f"Generated {len(result.queries)} queries.")
-                else:
-                    st.error(f"Query planning failed: {result.error_message}")
+            
+            status_container.update(state="complete")
+            
+            if result.success:
+                new_text = "\n".join(result.queries)
+                st.session_state.planned_queries = result.queries
+                st.session_state.planned_queries_text = new_text
+                st.session_state["planned_queries_text_area"] = new_text
+                
+                # Show success with timing info
+                success_msg = f"Generated {len(result.queries)} queries."
+                if result.timing_info:
+                    total_time = sum(result.timing_info.values())
+                    success_msg += f" Total time: {total_time:.1f}s"
+                    if result.retry_count > 0:
+                        success_msg += f" (1 retry)"
+                st.success(success_msg)
+                
+                # Show detailed timing breakdown in expander (dev view)
+                if result.timing_info:
+                    with st.expander("Timing breakdown (dev)", expanded=False):
+                        for key, value in result.timing_info.items():
+                            st.text(f"{key}: {value:.2f}s")
+                        if result.retry_count > 0:
+                            st.warning(f"⚠️ Retry was needed - model may not be optimal for this prompt")
+            else:
+                st.error(f"Query planning failed: {result.error_message}")
+                if result.timing_info:
+                    with st.expander("Timing breakdown (dev)", expanded=False):
+                        for key, value in result.timing_info.items():
+                            st.text(f"{key}: {value:.2f}s")
 
     if st.session_state.planned_queries:
         st.session_state.planned_queries_to_run = st.number_input(
@@ -623,17 +699,17 @@ if st.session_state.input_mode == "search":
         )
 
     st.info("💡 Tip: You can freely edit the search queries or add your own list here. One query per line.")
-    # Use key parameter to ensure proper widget state tracking and prevent value restoration issues
-    # The key ensures Streamlit maintains widget state independently, preventing old values from reappearing
-    planned_queries_text = st.text_area(
+    # When using a widget key, Streamlit persists the value in st.session_state[key].
+    # Seed it once from planned_queries_text so the textbox shows existing content.
+    if "planned_queries_text_area" not in st.session_state:
+        st.session_state["planned_queries_text_area"] = st.session_state.planned_queries_text
+    st.text_area(
         "Planned queries (one per line):",
-        value=st.session_state.planned_queries_text,
         height=140,
         help="Review and edit the planned queries. One query per line.",
         key="planned_queries_text_area",
     )
-    # Always update session state immediately to keep it in sync with widget
-    # This prevents the old value from being restored on rerun
+    planned_queries_text = st.session_state.get("planned_queries_text_area", "")
     st.session_state.planned_queries_text = planned_queries_text
     # Update planned_queries list from text
     st.session_state.planned_queries = [
@@ -1315,14 +1391,30 @@ if st.session_state.search_results is not None:
     
     # Model selection
     with st.expander("AI Model Settings", expanded=False):
-        model_options = ["openai/gpt-4o-mini", "anthropic/claude-haiku-4.5", "meta-llama/llama-3.2-3b-instruct", "Custom"]
+        # Order by reliability: fastest + 0 retries first (from reliability analysis)
+        preset_models = [
+            "openai/gpt-4o-mini",
+            "openai/gpt-4.1-nano",
+            "google/gemini-2.5-flash-lite",
+            "openai/gpt-5-nano",
+            "anthropic/claude-haiku-4.5",
+            "meta-llama/llama-3.2-3b-instruct",
+        ]
+        model_options = preset_models + ["Custom"]
         col1, col2 = st.columns([3, 1])
         
         with col1:
+            current_filter_model = (st.session_state.selected_model or "").strip()
+            if current_filter_model in preset_models:
+                filter_model_index = preset_models.index(current_filter_model)
+            elif current_filter_model:
+                filter_model_index = model_options.index("Custom")
+            else:
+                filter_model_index = 0
             selected_model_option = st.selectbox(
                 "AI Model:",
                 model_options,
-                index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
+                index=filter_model_index,
                 help="Choose the AI model for video relevance filtering. Free models may have limits. OpenAI models are generally reliable. See https://openrouter.ai/models for all available options."
             )
         
@@ -1330,8 +1422,8 @@ if st.session_state.search_results is not None:
             if selected_model_option == "Custom":
                 custom_model = st.text_input(
                     "Custom Model:",
-                    value=st.session_state.selected_model if st.session_state.selected_model not in model_options[:-1] else "",
-                    placeholder="e.g., openai/gpt-4, anthropic/claude-3-haiku",
+                    value=current_filter_model if current_filter_model not in preset_models else "",
+                    placeholder="e.g., openai/gpt-5-nano, anthropic/claude-haiku-4.5",
                     help="Enter custom OpenRouter model identifier. Must be in format 'provider/model-name'. Check https://openrouter.ai/models for available options."
                 )
                 selected_model = custom_model.strip()
@@ -1483,20 +1575,16 @@ if st.session_state.search_results is not None:
         if st.button(f"Copy {action_label} URLs", key=f"{action_key_prefix}_copy_urls", use_container_width=True):
             urls = [item.video_url for item in action_videos]
             urls_text = "\n".join(urls)
-            st.code(urls_text, language=None)
-            st.success(f"Copied {len(urls)} {action_label.lower()} URLs to clipboard (select and copy the code block above)")
+            _copy_to_clipboard(urls_text, label=f"{action_label.lower()} URLs", count=len(urls), language=None)
     
     with col2:
         if st.button(f"Copy {action_label} IDs", key=f"{action_key_prefix}_copy_ids", use_container_width=True):
             ids = [item.video_id for item in action_videos]
             ids_text = ",".join(ids)
-            st.code(ids_text, language=None)
-            st.success(f"Copied {len(ids)} {action_label.lower()} video IDs to clipboard (select and copy the code block above)")
+            _copy_to_clipboard(ids_text, label="video IDs", count=len(ids), language=None)
     
     with col3:
         if st.button(f"Copy {action_label} as JSON", key=f"{action_key_prefix}_copy_json", use_container_width=True):
-            import json
-            
             results_data = []
             for item in action_videos:
                 results_data.append({
@@ -1509,8 +1597,7 @@ if st.session_state.search_results is not None:
                     "description": item.description,
                 })
             json_text = json.dumps(results_data, indent=2, ensure_ascii=False)
-            st.code(json_text, language="json")
-            st.success(f"Copied {len(results_data)} {action_label.lower()} results as JSON to clipboard (select and copy the code block above)")
+            _copy_to_clipboard(json_text, label="results as JSON", count=len(results_data), language="json")
     
     with col4:
         if st.button(f"Send {action_label} to Transcript Tool", key=f"{action_key_prefix}_send_transcript", type="primary", use_container_width=True):

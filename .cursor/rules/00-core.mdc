@@ -122,4 +122,7 @@ INTEGRATED STANDARDS
 - Prevention methods documented and reusable
 - Session continuity maintained through resume task system
 
+LLM TOKEN LIMIT RULES (CRITICAL CONSTRAINT MANAGEMENT)
+- Always estimate token usage conservatively: apply 1.5-2x multiplier to estimated requirements to ensure completion without truncation
+
 END OF SOP
