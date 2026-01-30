@@ -167,6 +167,19 @@ def process_single_video_parallel(
     return result
 
 
+def _format_elapsed_time(seconds: float) -> str:
+    """Format elapsed time for stopwatch display.
+    
+    Under 60s: "23.4s"
+    60s+: "2m 15s"
+    """
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    remaining_seconds = int(seconds % 60)
+    return f"{minutes}m {remaining_seconds}s"
+
+
 def categorize_error(error_msg: str, is_code_error: bool = False) -> tuple[str, str]:
     """
     Categorize errors for proxy-based extraction.
@@ -568,6 +581,40 @@ if pre_validate and rows:
 processing_step = "4" if pre_validate else "3"
 st.header(f"{processing_step}) Processing (Proxy Method)")
 st.caption("Processing each row using residential proxy extraction with live status updates...")
+
+# JavaScript-based running timer (updates every 100ms in browser)
+# Use a placeholder so we can replace it with static time after completion
+processing_start_time = time.time()
+timer_placeholder = st.empty()
+timer_html = """
+<div style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; 
+            font-size: 14px; color: #31333F; padding: 8px 0;">
+    <span style="font-weight: 600;">Elapsed:</span> 
+    <span id="processing-timer" style="font-weight: 500;">0.0s</span>
+</div>
+<script>
+    (function() {
+        var startTime = Date.now();
+        var timerEl = document.getElementById('processing-timer');
+        function updateTimer() {
+            var elapsed = (Date.now() - startTime) / 1000;
+            var display;
+            if (elapsed < 60) {
+                display = elapsed.toFixed(1) + 's';
+            } else {
+                var mins = Math.floor(elapsed / 60);
+                var secs = Math.floor(elapsed % 60);
+                display = mins + 'm ' + secs + 's';
+            }
+            if (timerEl) timerEl.textContent = display;
+        }
+        setInterval(updateTimer, 100);
+        updateTimer();
+    })();
+</script>
+"""
+with timer_placeholder:
+    st.components.v1.html(timer_html, height=40)
 
 rows = normalize_rows(parsed, mapping)
 
@@ -1072,6 +1119,13 @@ else:
 
     st.session_state.processing_state['is_running'] = False
 
+# Calculate final elapsed time and stop the timer
+total_processing_time = time.time() - processing_start_time
+total_time_formatted = _format_elapsed_time(total_processing_time)
+
+# Replace the running timer with static final time
+timer_placeholder.markdown(f"**Total Time: {total_time_formatted}**")
+
 # Final summary
 if processing_crashed:
     st.error("[CRASH] Processing failed due to application error")
@@ -1083,6 +1137,7 @@ else:
     st.success("[DONE] Processing Complete!")
 
 st.write("---")
+st.write(f"**Total Processing Time: {total_time_formatted}**")
 st.write("**Final Results:**")
 st.write(f"- **Total Processed:** {processed_count}/{total_rows} videos")
 st.write(f"- **Successful:** {success_count} videos")
@@ -1125,6 +1180,7 @@ log_lines = [
     f"Session Directory: {session.session_dir}",
     f"Extraction Method: Proxy Residential",
     f"Started: {datetime.now().isoformat()}",
+    f"Total Processing Time: {total_time_formatted}",
     f"Pre-validation: {'Enabled' if pre_validate else 'Disabled'}",
     f"Total Rows After Validation: {total_rows}",
     f"Successful: {success_count}",
@@ -1183,8 +1239,19 @@ logs_step = "6" if pre_validate else "5"
 st.header(f"{logs_step}) Copy Session Logs")
 st.caption("Copy all session logs for debugging or record-keeping.")
 
-with st.expander("View Full Session Logs", expanded=True):
-    st.code(log_text, language="text")
+with st.expander("View Full Session Logs", expanded=False):
+    # Use a scrollable container with max height
+    import html as html_lib
+    escaped_log = html_lib.escape(log_text)
+    scrollable_log_html = f"""
+    <div style="max-height: 400px; overflow-y: auto; background-color: #f5f5f5; 
+                padding: 12px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, 
+                Menlo, Monaco, Consolas, monospace; font-size: 12px; white-space: pre-wrap; 
+                word-wrap: break-word; line-height: 1.4;">
+{escaped_log}
+    </div>
+    """
+    st.components.v1.html(scrollable_log_html, height=420, scrolling=False)
 
 st.text_area(
     "Select all and copy (Ctrl+A, Ctrl+C):",
