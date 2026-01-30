@@ -16,6 +16,66 @@ import streamlit as st
 from dotenv import load_dotenv
 
 
+def _build_rich_youtube_metadata(row: dict, yt_dlp_meta: dict) -> dict:
+    """
+    Build comprehensive YouTube metadata dict from row (session state) and yt-dlp fallback.
+    
+    Prioritizes rich metadata from YouTube Search (in row) over yt-dlp fetched data.
+    
+    Args:
+        row: Dict from parsed sheet containing session state metadata
+        yt_dlp_meta: Dict from yt-dlp fetch_youtube_metadata().raw
+    
+    Returns:
+        Dict with all available YouTube metadata for transcript frontmatter
+    """
+    metadata = {}
+    
+    # Channel info - prefer session state (channel_title) over yt-dlp (channel)
+    if row.get("channel_title"):
+        metadata["channel_title"] = row["channel_title"]
+    elif yt_dlp_meta.get("channel"):
+        metadata["channel_title"] = yt_dlp_meta["channel"]
+    
+    # Published date - prefer session state ISO format over yt-dlp format
+    if row.get("published_at"):
+        metadata["published_at"] = row["published_at"]
+    elif yt_dlp_meta.get("upload_date"):
+        metadata["upload_date"] = yt_dlp_meta["upload_date"]
+    
+    # Duration - prefer session state (seconds) over yt-dlp (string)
+    if row.get("duration_seconds") is not None:
+        metadata["duration_seconds"] = row["duration_seconds"]
+    elif yt_dlp_meta.get("duration"):
+        metadata["duration"] = yt_dlp_meta["duration"]
+    
+    # View/engagement stats (only from session state - yt-dlp doesn't fetch these reliably)
+    if row.get("view_count") is not None:
+        metadata["view_count"] = row["view_count"]
+    if row.get("like_count") is not None:
+        metadata["like_count"] = row["like_count"]
+    if row.get("comment_count") is not None:
+        metadata["comment_count"] = row["comment_count"]
+    
+    # Caption availability
+    if row.get("has_captions") is not None:
+        metadata["has_captions"] = row["has_captions"]
+    
+    # Tags (list)
+    if row.get("tags"):
+        metadata["tags"] = row["tags"]
+    
+    # Category
+    if row.get("category_id"):
+        metadata["category_id"] = row["category_id"]
+    
+    # Thumbnail URL
+    if row.get("thumbnail_url"):
+        metadata["thumbnail_url"] = row["thumbnail_url"]
+    
+    return metadata
+
+
 def process_single_video_parallel(
     youtube_url: str,
     video_id: str,
@@ -50,22 +110,21 @@ def process_single_video_parallel(
     }
     
     try:
-        # Step 1: Fetch metadata
+        # Step 1: Fetch metadata via yt-dlp (for fallback and JSON export)
         meta = fetch_youtube_metadata(youtube_url)
         result["video_id"] = meta.video_id or video_id
         result["title"] = meta.title or title or row.get("title", "")
-        result["metadata"] = {
-            "duration": meta.raw.get("duration", "Unknown"),
-            "channel": meta.raw.get("channel", "Unknown"),
-            "upload_date": meta.raw.get("upload_date"),
-        }
+        
+        # Build rich metadata from session state (row) with yt-dlp fallback
+        rich_metadata = _build_rich_youtube_metadata(row, meta.raw)
+        result["metadata"] = rich_metadata
         
         if not result["video_id"]:
             result["error"] = "Could not extract video ID from URL"
             result["elapsed"] = time.time() - start_time
             return result
         
-        # Save metadata
+        # Save yt-dlp metadata JSON (for debugging/future use)
         meta_path = os.path.join(
             session_youtube_dir, 
             f"{slugify(result['title'])}__{result['video_id']}.metadata.json"
@@ -78,7 +137,7 @@ def process_single_video_parallel(
         result["method"] = transcript_result.method
         
         if transcript_result.success:
-            # Step 3: Write transcript file
+            # Step 3: Write transcript file with rich metadata
             filename = generate_filename(result["video_id"], result["title"], "youtube")
             transcript_path = os.path.join(session_youtube_dir, filename)
             
@@ -91,7 +150,7 @@ def process_single_video_parallel(
                 description=row.get("description"),
                 video_id=result["video_id"],
                 method=transcript_result.method,
-                youtube_metadata=result["metadata"],
+                youtube_metadata=rich_metadata,
             )
             
             result["success"] = True
@@ -851,6 +910,9 @@ else:
                             filename = generate_filename(video_id, title, "youtube")
                             transcript_path = os.path.join(session.youtube_dir, filename)
 
+                            # Build rich metadata from session state with yt-dlp fallback
+                            rich_metadata = _build_rich_youtube_metadata(row, meta.raw)
+
                             write_transcript_markdown(
                                 output_path=transcript_path,
                                 source_type="youtube",
@@ -860,11 +922,7 @@ else:
                                 description=row.get("description"),
                                 video_id=video_id,
                                 method=transcript_result.method,
-                                youtube_metadata={
-                                    "channel": meta.raw.get("channel"),
-                                    "upload_date": meta.raw.get("upload_date"),
-                                    "duration": meta.raw.get("duration"),
-                                },
+                                youtube_metadata=rich_metadata,
                             )
 
                             video_status.update({
