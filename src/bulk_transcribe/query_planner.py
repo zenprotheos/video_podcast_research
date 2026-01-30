@@ -5,9 +5,20 @@ import random
 import re
 import time
 from dataclasses import dataclass
+from datetime import date
 from typing import Callable, Dict, List, Optional
 
 import requests
+
+
+def _get_date_context() -> str:
+    """Return current date context string for AI prompts.
+    
+    This allows AI models to correctly interpret temporal references like
+    'latest', 'recent', or 'within last 6 months' in user prompts.
+    """
+    today = date.today()
+    return f"Today's date is {today.strftime('%B %d, %Y')} ({today.year})."
 
 
 @dataclass
@@ -52,6 +63,7 @@ def infer_single_required_term(
         return InferRequiredTermResult(False, None, f"Invalid model format: '{model}'")
 
     system_prompt = (
+        f"{_get_date_context()}\n\n"
         "You suggest exactly ONE required term (1-2 words, preferably just 1 word) that defines "
         "the NICHE of the user's research. This term acts as a strict filter - videos without it "
         "will be excluded. Choose the most specific single word that captures the niche.\n\n"
@@ -184,6 +196,7 @@ def plan_search_queries(
         return QueryPlanResult([], False, f"Invalid model format: '{model}'")
 
     system_prompt = (
+        f"{_get_date_context()}\n\n"
         "You create distinct YouTube search queries from the user's research intent.\n\n"
         "QUERY STRATEGY - DOMAIN DECOMPOSITION (CRITICAL):\n"
         "Think about the topic structurally. What are the major subcategories, subdisciplines, "

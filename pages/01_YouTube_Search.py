@@ -1,6 +1,7 @@
 """YouTube Search Tool - Phase 1"""
 import json
 import os
+import time
 from datetime import datetime, date, timedelta
 from typing import List, Optional
 
@@ -31,6 +32,19 @@ def _format_duration(seconds: Optional[int]) -> str:
         return ""
     h, m, s = seconds // 3600, (seconds % 3600) // 60, seconds % 60
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _format_elapsed_time(seconds: float) -> str:
+    """Format elapsed time for stopwatch display.
+    
+    Under 60s: "23.4s"
+    60s+: "2m 15s"
+    """
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    remaining_seconds = int(seconds % 60)
+    return f"{minutes}m {remaining_seconds}s"
 
 
 def _format_count(count: Optional[int]) -> str:
@@ -1519,10 +1533,50 @@ if st.session_state.search_results is not None:
     if st.button("Filter Videos with AI", type="primary", use_container_width=True, 
                  disabled=not st.session_state.research_context.strip()):
         st.session_state.filter_ai_progress_lines = []
+        st.session_state.filter_start_time = time.time()
+        st.session_state.filter_elapsed_time = None
+        
+        # JavaScript-based running timer (updates every 100ms in browser)
+        timer_html = """
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; 
+                    font-size: 14px; color: #31333F; padding: 8px 0;">
+            <span style="font-weight: 600;">Elapsed:</span> 
+            <span id="running-timer" style="font-weight: 500;">0.0s</span>
+        </div>
+        <script>
+            (function() {
+                var startTime = Date.now();
+                var timerEl = document.getElementById('running-timer');
+                function updateTimer() {
+                    var elapsed = (Date.now() - startTime) / 1000;
+                    var display;
+                    if (elapsed < 60) {
+                        display = elapsed.toFixed(1) + 's';
+                    } else {
+                        var mins = Math.floor(elapsed / 60);
+                        var secs = Math.floor(elapsed % 60);
+                        display = mins + 'm ' + secs + 's';
+                    }
+                    if (timerEl) timerEl.textContent = display;
+                }
+                setInterval(updateTimer, 100);
+                updateTimer();
+            })();
+        </script>
+        """
+        st.components.v1.html(timer_html, height=40)
+        
         live_placeholder = st.empty()
+        
         def on_filter_progress(msg: str) -> None:
-            st.session_state.filter_ai_progress_lines.append(msg)
+            elapsed = time.time() - st.session_state.filter_start_time
+            elapsed_formatted = _format_elapsed_time(elapsed)
+            # Prepend timestamp to each batch message (real Python-measured time)
+            timestamped_msg = f"[{elapsed_formatted}] {msg}"
+            st.session_state.filter_ai_progress_lines.append(timestamped_msg)
+            # Display progress lines below the JS timer
             live_placeholder.caption("\n".join(st.session_state.filter_ai_progress_lines))
+        
         with st.spinner("AI is evaluating video relevance..."):
             try:
                 search_results = st.session_state.search_results
@@ -1538,16 +1592,31 @@ if st.session_state.search_results is not None:
                         progress_callback=on_filter_progress,
                     )
                     st.session_state.filtered_results = filter_result
+                    # Store final elapsed time
+                    final_elapsed = time.time() - st.session_state.filter_start_time
+                    st.session_state.filter_elapsed_time = final_elapsed
                 else:
                     st.error("No videos available for filtering")
                     filter_result = None
                     st.session_state.filtered_results = None
                 
                 if filter_result and filter_result.success:
-                    st.success(
+                    # Build success message with cleanup info if applicable
+                    msg = (
                         f"Filtered {filter_result.total_processed} videos: "
                         f"{len(filter_result.relevant_videos)} relevant, {len(filter_result.filtered_out_videos)} filtered out"
                     )
+                    if filter_result.cleanup_recovered > 0:
+                        msg += f" ({filter_result.cleanup_recovered} recovered in cleanup)"
+                    
+                    # Check if there are any failed videos (partial success)
+                    failed_count = len(filter_result.failed_batch_videos) if filter_result.failed_batch_videos else 0
+                    if failed_count > 0:
+                        st.warning(
+                            f"{msg}. Note: {failed_count} video(s) could not be evaluated after retry."
+                        )
+                    else:
+                        st.success(msg)
                     st.rerun()
                 elif filter_result:
                     st.error(f"Filtering failed: {filter_result.error_message}")
@@ -1559,15 +1628,31 @@ if st.session_state.search_results is not None:
     # Show filtered results status
     if st.session_state.filtered_results and st.session_state.filtered_results.success:
         filtered_result = st.session_state.filtered_results
-        st.info(
+        
+        # Build status message with cleanup and failure info
+        status_msg = (
             f"AI filtered {filtered_result.total_processed} videos based on your research context. "
             f"Found {len(filtered_result.relevant_videos)} relevant videos. "
-            f"Shortlisted results are shown in Step 2 above."
         )
+        if filtered_result.cleanup_recovered > 0:
+            status_msg += f"Recovered {filtered_result.cleanup_recovered} in cleanup phase. "
+        status_msg += "Shortlisted results are shown in Step 2 above."
+        
+        failed_count = len(filtered_result.failed_batch_videos) if filtered_result.failed_batch_videos else 0
+        if failed_count > 0:
+            st.warning(f"{status_msg} Note: {failed_count} video(s) could not be evaluated.")
+        else:
+            st.info(status_msg)
         # Concise live-update log (collapsed after job done)
         progress_lines = st.session_state.get("filter_ai_progress_lines") or []
-        if progress_lines:
+        filter_elapsed = st.session_state.get("filter_elapsed_time")
+        if progress_lines or filter_elapsed:
             with st.expander("AI filter progress", expanded=False):
+                # Show total time at the TOP
+                if filter_elapsed:
+                    total_time_str = _format_elapsed_time(filter_elapsed)
+                    st.caption(f"**Total time: {total_time_str}**")
+                    st.caption("")  # Empty line separator
                 for line in progress_lines:
                     st.caption(line)
         # Dev console — per-batch logs (title, description, full reason; wrap, scroll, manual height)
@@ -1607,6 +1692,16 @@ if st.session_state.search_results is not None:
                                 key=f"dev_reason_{bid}_{vid}",
                             )
                             st.divider()
+        
+        # Dev console — failed batch videos (if any)
+        failed_videos = getattr(filtered_result, "failed_batch_videos", None)
+        if failed_videos:
+            with st.expander(f"Dev console — failed videos ({len(failed_videos)})", expanded=False):
+                st.caption("These videos could not be evaluated after cleanup retry:")
+                for fv in failed_videos:
+                    vid = getattr(fv, "video_id", "?")
+                    title = getattr(fv, "title", "") or ""
+                    st.markdown(f"**{vid}**: {title[:80]}{'...' if len(title) > 80 else ''}")
 
 # Step 4: Final Actions (only show when videos are loaded)
 if st.session_state.search_results is not None:
@@ -1711,7 +1806,7 @@ if st.session_state.search_results is not None:
                 st.session_state['transcript_source'] = action_source
                 st.success(f"Prepared {len(urls)} {action_label.lower()} videos{query_info} for transcription with rich metadata")
             st.page_link(
-                "pages/02_Bulk_Transcribe.py",
+                "pages/03_Bulk_Transcribe_Proxy.py",
                 label="Go to Transcript Tool",
                 help="Continue to the transcript tool with selected videos"
             )

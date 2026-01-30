@@ -17,6 +17,14 @@ class FilterValidationError(Exception):
 
 
 @dataclass
+class CleanupResult:
+    """Result of cleanup phase for unprocessed videos."""
+    relevant: List[VideoSearchItem]
+    filtered_out: List[VideoSearchItem]
+    failed: List[VideoSearchItem]
+
+
+@dataclass
 class FilteringResult:
     """Result of AI-based video filtering."""
     relevant_videos: List[VideoSearchItem]
@@ -25,6 +33,10 @@ class FilteringResult:
     success: bool
     error_message: Optional[str] = None
     batch_summaries: Optional[List[Dict[str, Any]]] = None  # per-batch log for QA / dev console
+    # Resilience fields for graceful error handling
+    failed_batch_videos: Optional[List[VideoSearchItem]] = None  # Videos that couldn't be evaluated
+    cleanup_attempted: bool = False  # True if cleanup batch was run
+    cleanup_recovered: int = 0  # Number of videos recovered in cleanup
 
 
 def filter_videos_by_relevance(
@@ -78,11 +90,13 @@ def filter_videos_by_relevance(
     except Exception as e:
         return FilteringResult([], [], 0, False, f"API connection test failed: {str(e)}")
 
-    all_relevant = []
-    all_filtered_out = []
+    all_relevant: List[VideoSearchItem] = []
+    all_filtered_out: List[VideoSearchItem] = []
     batch_summaries: List[Dict[str, Any]] = []
+    failed_batch_videos: List[VideoSearchItem] = []
+    batch_errors: List[Dict[str, Any]] = []
 
-    # Process videos in batches to avoid token limits
+    # Phase 1: Process videos in batches to avoid token limits
     for i in range(0, len(videos), batch_size):
         batch = videos[i:i + batch_size]
         batch_index = i // batch_size
@@ -106,37 +120,85 @@ def filter_videos_by_relevance(
                 n_in, n_out = len(batch_result[0]), len(batch_result[1])
                 progress_callback(f"batch_{batch_index + 1}: {len(batch)} evaluated, {n_in} in / {n_out} out")
 
-        except FilterValidationError as e:
-            # Validation failed after retry; stop task and return dev-facing error
-            remaining_videos = videos[i:]
-            all_filtered_out.extend(remaining_videos)
-            return FilteringResult(
-                relevant_videos=all_relevant,
-                filtered_out_videos=all_filtered_out,
-                total_processed=len(videos),
-                success=False,
-                error_message=str(e),
-                batch_summaries=batch_summaries if batch_summaries else None
-            )
-        except Exception as e:
-            # On other error, include all remaining videos in filtered_out
-            remaining_videos = videos[i:]
-            all_filtered_out.extend(remaining_videos)
-            return FilteringResult(
-                relevant_videos=all_relevant,
-                filtered_out_videos=all_filtered_out,
-                total_processed=len(videos),
-                success=False,
-                error_message=f"Error processing batch {batch_index + 1}: {str(e)}",
-                batch_summaries=batch_summaries if batch_summaries else None
-            )
+        except (FilterValidationError, Exception) as e:
+            # Log error and continue to next batch instead of stopping
+            error_msg = str(e)
+            batch_errors.append({
+                "batch_index": batch_index,
+                "error": error_msg,
+                "video_ids": [v.video_id for v in batch]
+            })
+            print(f"[AI Filter] Batch {batch_index + 1} failed, will retry in cleanup: {error_msg[:100]}")
+            if progress_callback:
+                progress_callback(f"batch_{batch_index + 1}: FAILED - will retry in cleanup phase")
+            # Don't add to failed_batch_videos yet - they'll get a second chance in cleanup
+
+    # Phase 2: Cleanup - retry unprocessed videos with smaller batches
+    all_input_ids = {v.video_id for v in videos}
+    processed_ids = {v.video_id for v in all_relevant + all_filtered_out}
+    unprocessed_ids = all_input_ids - processed_ids
+    
+    cleanup_attempted = False
+    cleanup_recovered = 0
+    
+    if unprocessed_ids:
+        cleanup_attempted = True
+        unprocessed_videos = [v for v in videos if v.video_id in unprocessed_ids]
+        if progress_callback:
+            progress_callback(f"cleanup: retrying {len(unprocessed_videos)} unprocessed videos with smaller batches...")
+        
+        # Use smaller batch size for better reliability (5 instead of 10)
+        cleanup_batch_size = min(5, len(unprocessed_videos))
+        cleanup_result = _retry_unprocessed_videos(
+            videos=unprocessed_videos,
+            search_query=search_query,
+            research_context=research_context,
+            model=model,
+            api_key=api_key,
+            batch_size=cleanup_batch_size,
+            required_terms=required_terms,
+            progress_callback=progress_callback,
+        )
+        
+        # Add recovered videos to main results
+        cleanup_recovered = len(cleanup_result.relevant) + len(cleanup_result.filtered_out)
+        all_relevant.extend(cleanup_result.relevant)
+        all_filtered_out.extend(cleanup_result.filtered_out)
+        failed_batch_videos.extend(cleanup_result.failed)
+        
+        if progress_callback and cleanup_recovered > 0:
+            progress_callback(f"cleanup: recovered {cleanup_recovered} videos ({len(cleanup_result.relevant)} in / {len(cleanup_result.filtered_out)} out)")
+        if progress_callback and cleanup_result.failed:
+            progress_callback(f"cleanup: {len(cleanup_result.failed)} videos could not be evaluated after retry")
+
+    # Determine success status
+    # success=True if we processed at least some videos successfully
+    # success=False only if ALL videos failed
+    has_results = len(all_relevant) > 0 or len(all_filtered_out) > 0
+    all_failed = len(failed_batch_videos) == len(videos)
+    
+    if all_failed:
+        return FilteringResult(
+            relevant_videos=[],
+            filtered_out_videos=[],
+            total_processed=len(videos),
+            success=False,
+            error_message="All batches failed - no videos could be evaluated",
+            batch_summaries=batch_summaries if batch_summaries else None,
+            failed_batch_videos=failed_batch_videos if failed_batch_videos else None,
+            cleanup_attempted=cleanup_attempted,
+            cleanup_recovered=cleanup_recovered,
+        )
 
     return FilteringResult(
         relevant_videos=all_relevant,
         filtered_out_videos=all_filtered_out,
         total_processed=len(videos),
         success=True,
-        batch_summaries=batch_summaries
+        batch_summaries=batch_summaries if batch_summaries else None,
+        failed_batch_videos=failed_batch_videos if failed_batch_videos else None,
+        cleanup_attempted=cleanup_attempted,
+        cleanup_recovered=cleanup_recovered,
     )
 
 
@@ -568,13 +630,80 @@ def _parse_and_validate_json_response(
     parsed_ids = set(result.keys())
     missing = expected_video_ids - parsed_ids
     unknown = parsed_ids - expected_video_ids
+    
+    # Discard hallucinated IDs (LLM returned IDs not in the batch) - just log warning
+    if unknown:
+        print(f"[AI Filter] Warning: Discarding hallucinated IDs from model response: {sorted(unknown)}")
+        for uid in unknown:
+            del result[uid]
+    
     # Treat missing IDs as filtered out (model omitted them)
     for vid in missing:
         result[vid] = (False, "Omitted from model response")
-    if unknown:
-        raise ValueError(f"ID validation failed: unknown IDs: {sorted(unknown)}")
 
     return result
+
+
+def _retry_unprocessed_videos(
+    videos: List[VideoSearchItem],
+    search_query: str,
+    research_context: str,
+    model: str,
+    api_key: str,
+    batch_size: int = 5,
+    required_terms: Optional[str] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
+) -> CleanupResult:
+    """
+    Retry unprocessed videos with smaller batch size for better reliability.
+    
+    This is the cleanup phase that runs after the main batch processing completes.
+    Videos that couldn't be evaluated in the main loop get a second chance here
+    with smaller batches to reduce LLM errors.
+    
+    Args:
+        videos: List of unprocessed videos to retry
+        search_query: Original search query used
+        research_context: User's research goal/context
+        model: OpenRouter model identifier
+        api_key: OpenRouter API key
+        batch_size: Smaller batch size for reliability (default 5)
+        required_terms: Optional required terms filter
+        progress_callback: Optional callback for progress updates
+    
+    Returns:
+        CleanupResult with relevant, filtered_out, and failed lists
+    """
+    relevant: List[VideoSearchItem] = []
+    filtered_out: List[VideoSearchItem] = []
+    failed: List[VideoSearchItem] = []
+    
+    for i in range(0, len(videos), batch_size):
+        batch = videos[i:i + batch_size]
+        cleanup_batch_index = i // batch_size
+        
+        try:
+            r, f, _ = _filter_video_batch(
+                batch=batch,
+                search_query=search_query,
+                research_context=research_context,
+                model=model,
+                api_key=api_key,
+                batch_index=f"cleanup_{cleanup_batch_index}",
+                required_terms=required_terms,
+            )
+            relevant.extend(r)
+            filtered_out.extend(f)
+            if progress_callback:
+                progress_callback(f"cleanup_{cleanup_batch_index + 1}: {len(r)} in / {len(f)} out")
+        except Exception as e:
+            # Final fallback - mark entire batch as failed
+            print(f"[AI Filter] Cleanup batch {cleanup_batch_index} failed: {e}")
+            failed.extend(batch)
+            if progress_callback:
+                progress_callback(f"cleanup_{cleanup_batch_index + 1}: FAILED - {len(batch)} videos could not be evaluated")
+    
+    return CleanupResult(relevant=relevant, filtered_out=filtered_out, failed=failed)
 
 
 def get_available_models(api_key: Optional[str] = None) -> List[str]:
