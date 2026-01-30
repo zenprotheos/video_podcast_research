@@ -205,12 +205,23 @@ def _filter_video_batch(
     expected_video_ids = {v.video_id for v in batch}
     batch_id = f"batch_{batch_index}"
     system_prompt = (
-        "You are a video relevance filter. Evaluate YouTube videos based on their metadata "
-        "to determine if they match the user's research goal. "
-        "Interpret the research goal with reasonable breadth: include videos that clearly "
-        "support or overlap the goal even if they use different terminology (e.g., related "
-        "tactics, adjacent domains, or different labels for the same idea). "
-        "Exclude only when content is clearly off-topic. Respond with only valid JSON."
+        "You are a video relevance filter for research. Identify videos USEFUL to someone researching the given topic.\n\n"
+        "TWO-LAYER FILTERING:\n\n"
+        "LAYER 1 - REQUIRED TERM (STRICT):\n"
+        "When required terms are specified, they define the NICHE and are non-negotiable. "
+        "The video must contain or clearly discuss the required term. "
+        "If the required term is missing, EXCLUDE the video regardless of how relevant the topic seems otherwise.\n\n"
+        "Example: For required term 'SaaS':\n"
+        "- EXCLUDE: 'Marketing strategies 2026' (no SaaS = wrong niche)\n"
+        "- EXCLUDE: 'B2B lead generation tactics' (no SaaS = wrong niche)\n"
+        "- INCLUDE: 'SaaS founder shares growth lessons' (SaaS present)\n\n"
+        "LAYER 2 - TOPIC RELEVANCE (FLEXIBLE):\n"
+        "Once a video passes the required term check, interpret the research topic BROADLY. "
+        "Someone researching 'marketing strategies' really wants to grow their business, get leads, convert customers, and increase revenue. "
+        "Include direct matches, adjacent strategies (sales, acquisition, retention), and founder advice or lessons learned.\n\n"
+        "EXCLUDE only when content has NO reasonable connection to the researcher's goals.\n\n"
+        "WHEN IN DOUBT, INCLUDE IT. Users can skip videos, but cannot watch videos you filtered out.\n\n"
+        "Respond with only valid JSON."
     )
 
     user_prompt = _build_user_prompt(batch, search_query, research_context, required_terms)

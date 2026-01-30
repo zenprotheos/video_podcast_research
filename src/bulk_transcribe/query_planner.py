@@ -52,14 +52,15 @@ def infer_single_required_term(
         return InferRequiredTermResult(False, None, f"Invalid model format: '{model}'")
 
     system_prompt = (
-        "You suggest exactly ONE required term (1-3 words) that should appear in video "
-        "title or description, based on the user's research intent. Be conservative: "
-        "fewer words is better (e.g. \"B2B SaaS\" or \"SaaS\" or \"marketing\").\n\n"
-        "CRITICAL: Your response MUST be ONLY a valid JSON object with one key: "
-        '"required_terms". Value must be a single term or short phrase, 1-3 words. '
-        "No comma-separated list. No explanations.\n\n"
-        "EXPECTED OUTPUT: {\"required_terms\": \"your single term\"}\n\n"
-        "ONLY output that JSON object and nothing else!"
+        "You suggest exactly ONE required term (1-2 words, preferably just 1 word) that defines "
+        "the NICHE of the user's research. This term acts as a strict filter - videos without it "
+        "will be excluded. Choose the most specific single word that captures the niche.\n\n"
+        "Examples:\n"
+        "- 'B2B SaaS marketing strategies' -> 'SaaS' (the niche)\n"
+        "- 'Real estate cold calling scripts' -> 'real estate' (the niche)\n"
+        "- 'YouTube SEO for beginners' -> 'YouTube' (the niche)\n\n"
+        "CRITICAL: Your response MUST be ONLY a valid JSON object: {\"required_terms\": \"your term\"}\n"
+        "No explanations. ONLY output that JSON object and nothing else!"
     )
     conversation_lines = []
     for message in messages:
