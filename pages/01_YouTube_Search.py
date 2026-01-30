@@ -17,12 +17,31 @@ from src.bulk_transcribe.youtube_search import (
     VideoSearchItem,
     SearchResult,
     get_search_filters_dict,
-    enrich_items_with_full_descriptions,
+    enrich_items_with_metadata,
 )
 from src.bulk_transcribe.video_filter import filter_videos_by_relevance, FilteringResult
-from src.bulk_transcribe.query_planner import plan_search_queries
+from src.bulk_transcribe.query_planner import infer_single_required_term, plan_search_queries
 from src.bulk_transcribe.direct_input import parse_direct_input, create_search_result_from_items, DirectInputResult
 from src.bulk_transcribe.metadata_transfer import video_search_item_to_dict, validate_metadata_list
+
+
+def _format_duration(seconds: Optional[int]) -> str:
+    """Format seconds as MM:SS or H:MM:SS."""
+    if not seconds:
+        return ""
+    h, m, s = seconds // 3600, (seconds % 3600) // 60, seconds % 60
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _format_count(count: Optional[int]) -> str:
+    """Format large numbers as 1.2M, 45K, etc."""
+    if count is None:
+        return ""
+    if count >= 1_000_000:
+        return f"{count/1_000_000:.1f}M"
+    if count >= 1_000:
+        return f"{count/1_000:.1f}K"
+    return str(count)
 
 
 def _copy_to_clipboard(text: str, *, label: str, count: int, language: Optional[str] = None) -> None:
@@ -95,6 +114,8 @@ def _display_results_table(items, search_result, title_suffix="", show_checkboxe
                 "Thumbnail": item.thumbnail_url or "",
                 "Title": item.title or "",
                 "Channel": item.channel_title or "",
+                "Duration": _format_duration(getattr(item, "duration_seconds", None)),
+                "Views": _format_count(getattr(item, "view_count", None)),
                 "Published": (item.published_at or "")[:10],
                 "Description": item.description or "",
                 "Watch": item.video_url or "",
@@ -123,6 +144,8 @@ def _display_results_table(items, search_result, title_suffix="", show_checkboxe
             "Thumbnail": st.column_config.ImageColumn("Thumb", width="small"),
             "Title": st.column_config.TextColumn("Title", width="medium"),
             "Channel": st.column_config.TextColumn("Channel", width="small"),
+            "Duration": st.column_config.TextColumn("Duration", width="small"),
+            "Views": st.column_config.TextColumn("Views", width="small"),
             "Published": st.column_config.TextColumn("Published", width="small"),
             "Description": st.column_config.TextColumn("Description", width="large"),
             "Watch": st.column_config.LinkColumn(
@@ -350,10 +373,10 @@ def _retry_planned_query(query_index: int):
                 if not page_token:
                     break
 
-            enrich_items_with_full_descriptions(
+            enrich_items_with_metadata(
                 aggregated_items,
                 YOUTUBE_API_KEY,
-                st.session_state.full_description_by_id,
+                st.session_state.video_metadata_cache,
             )
             run_data["status"] = "completed"
             st.session_state.search_results = SearchResult(
@@ -430,7 +453,11 @@ if not YOUTUBE_API_KEY:
     st.stop()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
-OPENROUTER_DEFAULT_MODEL = os.getenv("OPENROUTER_DEFAULT_MODEL", "openai/gpt-4o-mini")
+_raw_default = os.getenv("OPENROUTER_DEFAULT_MODEL", "openai/gpt-4o-mini").strip()
+# Normalize deprecated/wrong default to established default (4o-mini)
+if _raw_default == "openai/gpt-5-mini":
+    _raw_default = "openai/gpt-4o-mini"
+OPENROUTER_DEFAULT_MODEL = _raw_default or "openai/gpt-4o-mini"
 
 
 st.set_page_config(page_title="YouTube Search - Bulk Transcribe", layout="wide")
@@ -469,6 +496,9 @@ if 'query_planner_notes' not in st.session_state:
     st.session_state.query_planner_notes = ""
 if 'required_terms' not in st.session_state:
     st.session_state.required_terms = ""
+if 'required_terms_pending' not in st.session_state:
+    # Used to pre-fill required_terms on next rerun (must be applied before widget instantiation).
+    st.session_state.required_terms_pending = None
 if 'max_results_per_page' not in st.session_state:
     st.session_state.max_results_per_page = 50
 if 'max_pages_per_query' not in st.session_state:
@@ -491,8 +521,8 @@ if 'published_after_date' not in st.session_state:
     st.session_state.published_after_date = None  # date | None
 if 'published_before_date' not in st.session_state:
     st.session_state.published_before_date = None  # date | None
-if 'full_description_by_id' not in st.session_state:
-    st.session_state.full_description_by_id = {}  # cache for videos.list descriptions
+if 'video_metadata_cache' not in st.session_state:
+    st.session_state.video_metadata_cache = {}  # cache for videos.list metadata (Dict[str, Dict])
 
 # Direct input session state
 if 'input_mode' not in st.session_state:
@@ -550,13 +580,18 @@ if st.session_state.input_mode == "search":
     )
     st.session_state.query_planner_notes = research_notes
 
-    required_terms = st.text_input(
+    # Apply any pending inferred required term BEFORE the widget is instantiated.
+    pending_required_terms = (st.session_state.get("required_terms_pending") or "").strip()
+    if pending_required_terms and not (st.session_state.get("required_terms") or "").strip():
+        st.session_state["required_terms"] = pending_required_terms
+        st.session_state["required_terms_pending"] = None
+
+    st.text_input(
         "Required terms in title and description",
-        value=st.session_state.required_terms,
+        key="required_terms",
         placeholder="e.g., machine learning, Python, tutorial",
-        help="Keywords that must appear in video titles or descriptions. These will inform both search query generation and AI filtering.",
+        help="Keywords or phrases that must appear in video titles or descriptions. Separate multiple terms with commas; each will be quoted in search queries. Informs query generation and AI filtering.",
     )
-    st.session_state.required_terms = required_terms
 
     with st.expander("Query planning settings", expanded=False):
         col1, col2 = st.columns([3, 1])
@@ -632,61 +667,99 @@ if st.session_state.input_mode == "search":
                 messages.append(
                     {"role": "user", "content": f"Additional guidance: {st.session_state.query_planner_notes.strip()}"}
                 )
-            if st.session_state.required_terms.strip():
+            required_terms_empty = not (st.session_state.required_terms or "").strip()
+            if not required_terms_empty:
                 messages.append(
                     {"role": "user", "content": f"Required terms in title/description: {st.session_state.required_terms.strip()}"}
                 )
-            
-            # Live progress updates using status container
+
             status_container = st.status("Initializing...", expanded=True)
             progress_messages = []
-            
+
             def progress_callback(msg: str) -> None:
                 progress_messages.append(msg)
-                # Update status container with latest message
                 with status_container:
                     for pm in progress_messages:
                         st.text(pm)
-            
+
             with status_container:
-                result = plan_search_queries(
-                    messages=messages,
-                    model=st.session_state.query_planner_model,
-                    api_key=OPENROUTER_API_KEY,
-                    max_queries=st.session_state.query_plan_max_queries,
-                    progress_callback=progress_callback,
-                )
-            
-            status_container.update(state="complete")
-            
-            if result.success:
-                new_text = "\n".join(result.queries)
-                st.session_state.planned_queries = result.queries
-                st.session_state.planned_queries_text = new_text
-                st.session_state["planned_queries_text_area"] = new_text
-                
-                # Show success with timing info
-                success_msg = f"Generated {len(result.queries)} queries."
-                if result.timing_info:
-                    total_time = sum(result.timing_info.values())
-                    success_msg += f" Total time: {total_time:.1f}s"
-                    if result.retry_count > 0:
-                        success_msg += f" (1 retry)"
-                st.success(success_msg)
-                
-                # Show detailed timing breakdown in expander (dev view)
-                if result.timing_info:
-                    with st.expander("Timing breakdown (dev)", expanded=False):
-                        for key, value in result.timing_info.items():
-                            st.text(f"{key}: {value:.2f}s")
-                        if result.retry_count > 0:
-                            st.warning(f"⚠️ Retry was needed - model may not be optimal for this prompt")
-            else:
-                st.error(f"Query planning failed: {result.error_message}")
-                if result.timing_info:
-                    with st.expander("Timing breakdown (dev)", expanded=False):
-                        for key, value in result.timing_info.items():
-                            st.text(f"{key}: {value:.2f}s")
+                if required_terms_empty:
+                    infer_result = infer_single_required_term(
+                        messages=messages,
+                        model=st.session_state.query_planner_model,
+                        api_key=OPENROUTER_API_KEY,
+                        progress_callback=progress_callback,
+                    )
+                    if not infer_result.success or not infer_result.required_terms:
+                        status_container.update(state="complete")
+                        st.error(infer_result.error_message or "Could not infer a required term. Try entering one in Step 0.")
+                    else:
+                        # Can't set st.session_state.required_terms after the widget is created.
+                        # Store it as pending and apply it on the next rerun (before widget instantiation).
+                        st.session_state["required_terms_pending"] = infer_result.required_terms
+                        messages.append(
+                            {"role": "user", "content": f"Required terms in title/description: {infer_result.required_terms}"}
+                        )
+                        result = plan_search_queries(
+                            messages=messages,
+                            model=st.session_state.query_planner_model,
+                            api_key=OPENROUTER_API_KEY,
+                            max_queries=st.session_state.query_plan_max_queries,
+                            progress_callback=progress_callback,
+                        )
+                        status_container.update(state="complete")
+                        if result.success:
+                            new_text = "\n".join(result.queries)
+                            st.session_state.planned_queries = result.queries
+                            st.session_state.planned_queries_text = new_text
+                            st.session_state["planned_queries_text_area"] = new_text
+                            st.info("Required terms filled from your research prompt (one conservative term). Edit or clear above.")
+                            success_msg = f"Generated {len(result.queries)} queries."
+                            if result.timing_info:
+                                total_time = sum(result.timing_info.values())
+                                success_msg += f" Total time: {total_time:.1f}s"
+                            st.success(success_msg)
+                            if result.timing_info:
+                                with st.expander("Timing breakdown (dev)", expanded=False):
+                                    for key, value in result.timing_info.items():
+                                        st.text(f"{key}: {value:.2f}s")
+                            # Ensure Step 0 required-terms input immediately reflects the inferred value.
+                            st.rerun()
+                        else:
+                            st.error(f"Query planning failed: {result.error_message}")
+                else:
+                    result = plan_search_queries(
+                        messages=messages,
+                        model=st.session_state.query_planner_model,
+                        api_key=OPENROUTER_API_KEY,
+                        max_queries=st.session_state.query_plan_max_queries,
+                        progress_callback=progress_callback,
+                    )
+                    status_container.update(state="complete")
+                    if result.success:
+                        new_text = "\n".join(result.queries)
+                        st.session_state.planned_queries = result.queries
+                        st.session_state.planned_queries_text = new_text
+                        st.session_state["planned_queries_text_area"] = new_text
+                        success_msg = f"Generated {len(result.queries)} queries."
+                        if result.timing_info:
+                            total_time = sum(result.timing_info.values())
+                            success_msg += f" Total time: {total_time:.1f}s"
+                            if result.retry_count > 0:
+                                success_msg += " (1 retry)"
+                        st.success(success_msg)
+                        if result.timing_info:
+                            with st.expander("Timing breakdown (dev)", expanded=False):
+                                for key, value in result.timing_info.items():
+                                    st.text(f"{key}: {value:.2f}s")
+                                if result.retry_count > 0:
+                                    st.warning("Retry was needed - model may not be optimal for this prompt")
+                    else:
+                        st.error(f"Query planning failed: {result.error_message}")
+                        if result.timing_info:
+                            with st.expander("Timing breakdown (dev)", expanded=False):
+                                for key, value in result.timing_info.items():
+                                    st.text(f"{key}: {value:.2f}s")
 
     if st.session_state.planned_queries:
         st.session_state.planned_queries_to_run = st.number_input(
@@ -1002,10 +1075,10 @@ if (
 
             # Execute search
             search_result = search_youtube(**search_params)
-            enrich_items_with_full_descriptions(
+            enrich_items_with_metadata(
                 search_result.items,
                 YOUTUBE_API_KEY,
-                st.session_state.full_description_by_id,
+                st.session_state.video_metadata_cache,
             )
 
             # Store results in session state
@@ -1118,11 +1191,11 @@ if (
                     run_data["status"] = "completed"
 
                 progress_bar.progress(1.0)
-                status_text.write("Fetching full descriptions...")
-                enrich_items_with_full_descriptions(
+                status_text.write("Fetching full metadata...")
+                enrich_items_with_metadata(
                     aggregated_items,
                     YOUTUBE_API_KEY,
-                    st.session_state.full_description_by_id,
+                    st.session_state.video_metadata_cache,
                 )
                 status_text.write("Search complete. Preparing results.")
 
@@ -1271,10 +1344,10 @@ if st.session_state.search_results:
                                     "page_token": search_result.prev_page_token,
                                 })
                                 new_result = search_youtube(**search_params)
-                                enrich_items_with_full_descriptions(
+                                enrich_items_with_metadata(
                                     new_result.items,
                                     YOUTUBE_API_KEY,
-                                    st.session_state.full_description_by_id,
+                                    st.session_state.video_metadata_cache,
                                 )
                                 st.session_state.search_results = new_result
                                 st.session_state.current_page_token = search_result.prev_page_token
@@ -1296,10 +1369,10 @@ if st.session_state.search_results:
                                     "page_token": search_result.next_page_token,
                                 })
                                 new_result = search_youtube(**search_params)
-                                enrich_items_with_full_descriptions(
+                                enrich_items_with_metadata(
                                     new_result.items,
                                     YOUTUBE_API_KEY,
-                                    st.session_state.full_description_by_id,
+                                    st.session_state.video_metadata_cache,
                                 )
                                 st.session_state.search_results = new_result
                                 st.session_state.current_page_token = search_result.next_page_token
@@ -1445,16 +1518,24 @@ if st.session_state.search_results is not None:
     # Filter button
     if st.button("Filter Videos with AI", type="primary", use_container_width=True, 
                  disabled=not st.session_state.research_context.strip()):
+        st.session_state.filter_ai_progress_lines = []
+        live_placeholder = st.empty()
+        def on_filter_progress(msg: str) -> None:
+            st.session_state.filter_ai_progress_lines.append(msg)
+            live_placeholder.caption("\n".join(st.session_state.filter_ai_progress_lines))
         with st.spinner("AI is evaluating video relevance..."):
             try:
                 search_results = st.session_state.search_results
                 if search_results and hasattr(search_results, "items") and search_results.items:
+                    req_terms = (st.session_state.get("required_terms") or "").strip() or None
                     filter_result = filter_videos_by_relevance(
                         videos=search_results.items,
                         search_query=st.session_state.search_query,
                         research_context=st.session_state.research_context.strip(),
                         model=st.session_state.selected_model,
                         api_key=OPENROUTER_API_KEY,
+                        required_terms=req_terms,
+                        progress_callback=on_filter_progress,
                     )
                     st.session_state.filtered_results = filter_result
                 else:
@@ -1483,6 +1564,12 @@ if st.session_state.search_results is not None:
             f"Found {len(filtered_result.relevant_videos)} relevant videos. "
             f"Shortlisted results are shown in Step 2 above."
         )
+        # Concise live-update log (collapsed after job done)
+        progress_lines = st.session_state.get("filter_ai_progress_lines") or []
+        if progress_lines:
+            with st.expander("AI filter progress", expanded=False):
+                for line in progress_lines:
+                    st.caption(line)
         # Dev console — per-batch logs (title, description, full reason; wrap, scroll, manual height)
         summaries = getattr(filtered_result, "batch_summaries", None)
         if summaries:
@@ -1515,7 +1602,7 @@ if st.session_state.search_results is not None:
                             st.text_area(
                                 "Reason",
                                 value=reason,
-                                height=180,
+                                height=80,
                                 disabled=True,
                                 key=f"dev_reason_{bid}_{vid}",
                             )

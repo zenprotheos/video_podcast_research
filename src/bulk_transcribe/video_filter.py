@@ -4,7 +4,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import requests
 
@@ -34,7 +34,9 @@ def filter_videos_by_relevance(
     model: str,
     api_key: str,
     batch_size: int = 10,
-    log_dir: Optional[str] = None
+    log_dir: Optional[str] = None,
+    required_terms: Optional[str] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> FilteringResult:
     """
     Filter videos by relevance using OpenRouter API.
@@ -48,6 +50,8 @@ def filter_videos_by_relevance(
         batch_size: Number of videos to evaluate in each API call
         log_dir: If set, write minimal per-batch log files (batch_id, video_ids, decisions)
                   under this directory, e.g. logs/ai_filter/
+        required_terms: Optional. Terms that must appear or be clearly reflected in title/description.
+                        When non-empty, the filter excludes videos that do not contain or discuss these.
 
     Returns:
         FilteringResult with relevant and filtered videos
@@ -91,12 +95,16 @@ def filter_videos_by_relevance(
                 model=model,
                 api_key=api_key,
                 batch_index=batch_index,
-                log_dir=log_dir
+                log_dir=log_dir,
+                required_terms=required_terms,
             )
 
             all_relevant.extend(batch_result[0])
             all_filtered_out.extend(batch_result[1])
             batch_summaries.append(batch_result[2])
+            if progress_callback:
+                n_in, n_out = len(batch_result[0]), len(batch_result[1])
+                progress_callback(f"batch_{batch_index + 1}: {len(batch)} evaluated, {n_in} in / {n_out} out")
 
         except FilterValidationError as e:
             # Validation failed after retry; stop task and return dev-facing error
@@ -184,7 +192,8 @@ def _filter_video_batch(
     model: str,
     api_key: str,
     batch_index: int = 0,
-    log_dir: Optional[str] = None
+    log_dir: Optional[str] = None,
+    required_terms: Optional[str] = None,
 ) -> Tuple[List[VideoSearchItem], List[VideoSearchItem], Dict[str, Any]]:
     """
     Filter a single batch of videos using OpenRouter API.
@@ -195,9 +204,16 @@ def _filter_video_batch(
     """
     expected_video_ids = {v.video_id for v in batch}
     batch_id = f"batch_{batch_index}"
-    system_prompt = "You are a video relevance filter. Evaluate YouTube videos based on their metadata to determine if they match the user's research goal. Respond with only valid JSON."
+    system_prompt = (
+        "You are a video relevance filter. Evaluate YouTube videos based on their metadata "
+        "to determine if they match the user's research goal. "
+        "Interpret the research goal with reasonable breadth: include videos that clearly "
+        "support or overlap the goal even if they use different terminology (e.g., related "
+        "tactics, adjacent domains, or different labels for the same idea). "
+        "Exclude only when content is clearly off-topic. Respond with only valid JSON."
+    )
 
-    user_prompt = _build_user_prompt(batch, search_query, research_context)
+    user_prompt = _build_user_prompt(batch, search_query, research_context, required_terms)
 
     def _do_call() -> str:
         return _call_openrouter_api(
@@ -265,18 +281,27 @@ def _filter_video_batch(
 def _build_user_prompt(
     videos: List[VideoSearchItem],
     search_query: str,
-    research_context: str
+    research_context: str,
+    required_terms: Optional[str] = None,
 ) -> str:
     """Build the user prompt for the LLM. Each video is ID-anchored with [VIDEO_ID=...]."""
     prompt_parts = [
         f"Search Query: {search_query}",
         f"Research Context: {research_context}",
+    ]
+    req_terms = (required_terms or "").strip()
+    if req_terms:
+        prompt_parts.append(
+            f"Required terms (must appear or be clearly reflected in title/description): {req_terms}. "
+            "Exclude videos that do not contain or clearly discuss these; apply flexibility only within this constraint."
+        )
+    prompt_parts.extend([
         "",
         "Evaluate the following videos. Respond with ONLY valid JSON in this exact shape (no other text):",
         '{"decisions": [{"video_id": "<id>", "relevant": <true|false>, "reason": "<string>"}, ...]}',
         "Use the [VIDEO_ID=...] from each block as the value for \"video_id\" in your response. One decision per video.",
         "",
-    ]
+    ])
 
     for i, video in enumerate(videos, 1):
         prompt_parts.append(f"{i}. [VIDEO_ID={video.video_id}]")
@@ -288,6 +313,12 @@ def _build_user_prompt(
         if len(description) == 500:
             description += "..."
         prompt_parts.append(f"Description: {description}")
+
+        # Add tags if available (helpful for relevance filtering)
+        video_tags = getattr(video, "tags", None) or []
+        if video_tags:
+            tags_str = ", ".join(video_tags[:15])  # Limit to 15 tags
+            prompt_parts.append(f"Tags: {tags_str}")
 
         # Format published date nicely
         published = video.published_at[:10] if video.published_at else "Unknown"
@@ -524,15 +555,13 @@ def _parse_and_validate_json_response(
         result[vid] = (rel, reason)
 
     parsed_ids = set(result.keys())
-    if parsed_ids != expected_video_ids:
-        missing = expected_video_ids - parsed_ids
-        unknown = parsed_ids - expected_video_ids
-        parts = []
-        if missing:
-            parts.append(f"missing IDs: {sorted(missing)}")
-        if unknown:
-            parts.append(f"unknown IDs: {sorted(unknown)}")
-        raise ValueError(f"ID validation failed: {'; '.join(parts)}")
+    missing = expected_video_ids - parsed_ids
+    unknown = parsed_ids - expected_video_ids
+    # Treat missing IDs as filtered out (model omitted them)
+    for vid in missing:
+        result[vid] = (False, "Omitted from model response")
+    if unknown:
+        raise ValueError(f"ID validation failed: unknown IDs: {sorted(unknown)}")
 
     return result
 

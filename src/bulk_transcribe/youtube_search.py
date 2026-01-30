@@ -1,10 +1,32 @@
 """YouTube Data API v3 search functionality."""
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+
+
+def parse_iso8601_duration(duration_str: str) -> int:
+    """
+    Parse ISO 8601 duration (PT1H2M3S) to seconds.
+
+    Args:
+        duration_str: ISO 8601 duration string (e.g., "PT15M33S", "PT1H2M3S")
+
+    Returns:
+        Total seconds as integer, or 0 if parsing fails
+    """
+    if not duration_str:
+        return 0
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_str)
+    if not match:
+        return 0
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    return hours * 3600 + minutes * 60 + seconds
 
 
 @dataclass
@@ -23,6 +45,17 @@ class VideoSearchItem:
     query_id: Optional[str] = None
     query_text: Optional[str] = None
     query_sources: List[str] = field(default_factory=list)
+    # New fields from contentDetails
+    duration: Optional[str] = None           # ISO 8601 e.g. "PT15M33S"
+    duration_seconds: Optional[int] = None   # Parsed for display
+    has_captions: Optional[bool] = None      # True if captions available
+    # New fields from statistics
+    view_count: Optional[int] = None
+    like_count: Optional[int] = None
+    comment_count: Optional[int] = None
+    # Additional snippet fields
+    tags: List[str] = field(default_factory=list)
+    category_id: Optional[str] = None
 
 
 @dataclass
@@ -189,26 +222,35 @@ def parse_search_item(
         return None
 
 
-def enrich_items_with_full_descriptions(
+def enrich_items_with_metadata(
     items: List[VideoSearchItem],
     api_key: str,
-    cache: Optional[Dict[str, str]] = None,
+    cache: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> None:
     """
-    Replace truncated search.list descriptions with full descriptions via videos.list.
-    Mutates each item.description in place. Updates cache with fetched descriptions
-    so reruns do not re-request (quota: 1 unit per 50 videos per request).
+    Enrich VideoSearchItems with full metadata via videos.list API.
+
+    Fetches snippet (full description, tags, categoryId), contentDetails (duration, caption),
+    and statistics (viewCount, likeCount, commentCount). Mutates items in place.
+    Updates cache with fetched metadata so reruns do not re-request.
+
+    Quota cost: 1 unit per request (up to 50 videos per request).
+
+    Args:
+        items: List of VideoSearchItem to enrich
+        api_key: YouTube Data API key
+        cache: Optional dict mapping video_id -> metadata dict for caching
     """
     if not items:
         return
     cache = cache if cache is not None else {}
+
     # IDs we still need to fetch (not in cache)
     ids_to_fetch = [item.video_id for item in items if item.video_id and item.video_id not in cache]
+
     if not ids_to_fetch:
         # Hydrate from cache only
-        for item in items:
-            if item.video_id and item.video_id in cache:
-                item.description = cache[item.video_id]
+        _hydrate_items_from_cache(items, cache)
         return
 
     try:
@@ -216,24 +258,107 @@ def enrich_items_with_full_descriptions(
         for i in range(0, len(ids_to_fetch), 50):
             batch = ids_to_fetch[i : i + 50]
             request = youtube.videos().list(
-                part="snippet",
+                part="snippet,contentDetails,statistics",
                 id=",".join(batch),
                 maxResults=50,
-                fields="items(id,snippet(description))",
             )
             response = request.execute()
+
             for raw in response.get("items", []):
                 vid = raw.get("id")
-                desc = (raw.get("snippet") or {}).get("description") or ""
-                if vid:
-                    cache[vid] = desc
+                if not vid:
+                    continue
 
-        for item in items:
-            if item.video_id and item.video_id in cache:
-                item.description = cache[item.video_id]
+                snippet = raw.get("snippet") or {}
+                content_details = raw.get("contentDetails") or {}
+                statistics = raw.get("statistics") or {}
+
+                # Parse duration
+                duration_str = content_details.get("duration") or ""
+                duration_seconds = parse_iso8601_duration(duration_str)
+
+                # Parse caption availability
+                caption_str = content_details.get("caption") or ""
+                has_captions = caption_str.lower() == "true"
+
+                # Parse statistics (they come as strings from API)
+                view_count = _safe_int(statistics.get("viewCount"))
+                like_count = _safe_int(statistics.get("likeCount"))
+                comment_count = _safe_int(statistics.get("commentCount"))
+
+                # Store all metadata in cache
+                cache[vid] = {
+                    "description": snippet.get("description") or "",
+                    "tags": snippet.get("tags") or [],
+                    "category_id": snippet.get("categoryId") or "",
+                    "duration": duration_str,
+                    "duration_seconds": duration_seconds,
+                    "has_captions": has_captions,
+                    "view_count": view_count,
+                    "like_count": like_count,
+                    "comment_count": comment_count,
+                }
+
+        # Hydrate all items from cache
+        _hydrate_items_from_cache(items, cache)
+
     except Exception:
-        # On failure, leave items with existing (truncated) description
+        # On failure, leave items with existing data
         pass
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    """Safely convert a value to int, returning None if not possible."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _hydrate_items_from_cache(
+    items: List[VideoSearchItem],
+    cache: Dict[str, Dict[str, Any]]
+) -> None:
+    """Hydrate VideoSearchItem fields from cached metadata."""
+    for item in items:
+        if item.video_id and item.video_id in cache:
+            metadata = cache[item.video_id]
+            item.description = metadata.get("description", item.description)
+            item.tags = metadata.get("tags", [])
+            item.category_id = metadata.get("category_id")
+            item.duration = metadata.get("duration")
+            item.duration_seconds = metadata.get("duration_seconds")
+            item.has_captions = metadata.get("has_captions")
+            item.view_count = metadata.get("view_count")
+            item.like_count = metadata.get("like_count")
+            item.comment_count = metadata.get("comment_count")
+
+
+# Backward compatibility alias
+def enrich_items_with_full_descriptions(
+    items: List[VideoSearchItem],
+    api_key: str,
+    cache: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Deprecated: Use enrich_items_with_metadata instead."""
+    # Convert old string cache to new dict cache format if needed
+    if cache is not None:
+        # Check if it's the old format (Dict[str, str])
+        new_cache: Dict[str, Dict[str, Any]] = {}
+        for vid, value in cache.items():
+            if isinstance(value, str):
+                # Old format - convert to new format
+                new_cache[vid] = {"description": value}
+            elif isinstance(value, dict):
+                # Already new format
+                new_cache[vid] = value
+            else:
+                new_cache[vid] = {"description": str(value)}
+        cache.clear()
+        cache.update(new_cache)
+    enrich_items_with_metadata(items, api_key, cache)
 
 
 def get_search_filters_dict(

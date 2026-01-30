@@ -23,6 +23,15 @@ def video_search_item_to_dict(item: VideoSearchItem) -> Dict[str, Any]:
         'query_id': item.query_id,
         'query_text': item.query_text,
         'query_sources': item.query_sources,
+        # New enriched metadata fields
+        'duration': item.duration,
+        'duration_seconds': item.duration_seconds,
+        'has_captions': item.has_captions,
+        'view_count': item.view_count,
+        'like_count': item.like_count,
+        'comment_count': item.comment_count,
+        'tags': item.tags,
+        'category_id': item.category_id,
     }
 
 
@@ -42,6 +51,15 @@ def dict_to_video_search_item(data: Dict[str, Any]) -> VideoSearchItem:
         query_id=data.get('query_id'),
         query_text=data.get('query_text'),
         query_sources=data.get('query_sources', []),
+        # New enriched metadata fields
+        duration=data.get('duration'),
+        duration_seconds=data.get('duration_seconds'),
+        has_captions=data.get('has_captions'),
+        view_count=data.get('view_count'),
+        like_count=data.get('like_count'),
+        comment_count=data.get('comment_count'),
+        tags=data.get('tags', []),
+        category_id=data.get('category_id'),
     )
 
 
@@ -66,7 +84,9 @@ def metadata_to_parsed_sheet(metadata_list: List[Dict[str, Any]]) -> ParsedSheet
     """
     columns = [
         'source_type', 'youtube_url', 'title', 'description',
-        'channel_title', 'published_at', 'thumbnail_url', 'video_id'
+        'channel_title', 'published_at', 'thumbnail_url', 'video_id',
+        'duration_seconds', 'view_count', 'like_count', 'comment_count',
+        'tags', 'category_id', 'has_captions'
     ]
 
     rows = []
@@ -80,6 +100,13 @@ def metadata_to_parsed_sheet(metadata_list: List[Dict[str, Any]]) -> ParsedSheet
             'published_at': item.get('published_at', ''),
             'thumbnail_url': item.get('thumbnail_url', ''),
             'video_id': item.get('video_id', ''),
+            'duration_seconds': item.get('duration_seconds'),
+            'view_count': item.get('view_count'),
+            'like_count': item.get('like_count'),
+            'comment_count': item.get('comment_count'),
+            'tags': item.get('tags', []),
+            'category_id': item.get('category_id'),
+            'has_captions': item.get('has_captions'),
         }
         rows.append(row)
 

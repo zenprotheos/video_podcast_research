@@ -1,6 +1,7 @@
 """Query planning helper using OpenRouter for YouTube searches."""
 
 import json
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -18,6 +19,135 @@ class QueryPlanResult:
     raw_response: Optional[str] = None
     timing_info: Optional[Dict[str, float]] = None  # call durations, validation time, etc.
     retry_count: int = 0  # how many repair calls were made
+    required_terms: Optional[str] = None  # when infer_required_terms=True, LLM may return this
+
+
+@dataclass
+class InferRequiredTermResult:
+    """Result of inferring a single required term (1-3 words, conservative)."""
+    success: bool
+    required_terms: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+def infer_single_required_term(
+    messages: List[Dict[str, str]],
+    model: str,
+    api_key: str,
+    progress_callback: Optional[Callable[[str], None]] = None,
+) -> InferRequiredTermResult:
+    """
+    Infer exactly one conservative required term (1-3 words) from the research intent.
+    Used when the user leaves required terms blank: we get one term, then use it as
+    input to generate search queries so planned queries include quoted phrases.
+
+    Returns:
+        InferRequiredTermResult with required_terms (single term, 1-3 words) or error.
+    """
+    if not messages:
+        return InferRequiredTermResult(False, None, "No messages provided")
+    if not api_key:
+        return InferRequiredTermResult(False, None, "OpenRouter API key not provided")
+    if not model or "/" not in model:
+        return InferRequiredTermResult(False, None, f"Invalid model format: '{model}'")
+
+    system_prompt = (
+        "You suggest exactly ONE required term (1-3 words) that should appear in video "
+        "title or description, based on the user's research intent. Be conservative: "
+        "fewer words is better (e.g. \"B2B SaaS\" or \"SaaS\" or \"marketing\").\n\n"
+        "CRITICAL: Your response MUST be ONLY a valid JSON object with one key: "
+        '"required_terms". Value must be a single term or short phrase, 1-3 words. '
+        "No comma-separated list. No explanations.\n\n"
+        "EXPECTED OUTPUT: {\"required_terms\": \"your single term\"}\n\n"
+        "ONLY output that JSON object and nothing else!"
+    )
+    conversation_lines = []
+    for message in messages:
+        role = message.get("role", "user")
+        content = message.get("content", "").strip()
+        if not content:
+            continue
+        label = "User" if role == "user" else "Assistant"
+        conversation_lines.append(f"{label}: {content}")
+    user_prompt = (
+        "Conversation context:\n"
+        + "\n".join(conversation_lines)
+        + "\n\nReturn JSON: {\"required_terms\": \"exactly one term, 1-3 words\"}"
+    )
+
+    if progress_callback:
+        progress_callback("Inferring one required term...")
+    start = time.time()
+    try:
+        response_text = _call_openrouter_api(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            api_key=api_key,
+            max_queries=1,
+            timeout=20,
+        )
+    except Exception as e:
+        return InferRequiredTermResult(False, None, str(e))
+
+    raw = _parse_single_required_term_response(response_text)
+    if raw is None:
+        return InferRequiredTermResult(False, None, "Could not parse inferred required term")
+    single_term = _validate_single_required_term(raw)
+    if single_term is None:
+        return InferRequiredTermResult(False, None, "Inferred value must be one term, 1-3 words (no comma)")
+    return InferRequiredTermResult(True, single_term, None)
+
+
+def _parse_single_required_term_response(response_text: str) -> Optional[str]:
+    """Parse JSON object with required_terms key; return raw string or None."""
+    if not response_text or not response_text.strip():
+        return None
+    text = response_text.strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        fence = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+        if fence:
+            try:
+                parsed = json.loads(fence.group(1).strip())
+            except json.JSONDecodeError:
+                return None
+        else:
+            start, end = text.find("{"), text.rfind("}")
+            if start != -1 and end > start:
+                try:
+                    parsed = json.loads(text[start : end + 1])
+                except json.JSONDecodeError:
+                    return None
+            else:
+                return None
+    if not isinstance(parsed, dict) or "required_terms" not in parsed:
+        return None
+    val = parsed["required_terms"]
+    if not isinstance(val, str) or not val.strip():
+        return None
+    return val.strip()
+
+
+def _validate_single_required_term(raw: str) -> Optional[str]:
+    """
+    Enforce one term, 1-3 words. If comma present, take first segment.
+    Return normalized term or None if invalid.
+    """
+    if not raw or not raw.strip():
+        return None
+    s = raw.strip()
+    if "," in s:
+        s = s.split(",")[0].strip()
+    if not s:
+        return None
+    words = s.split()
+    if len(words) > 3:
+        s = " ".join(words[:3])
+    if len(s) > 50:
+        s = s[:50].strip()
+    return s if s else None
 
 
 def plan_search_queries(
@@ -29,6 +159,10 @@ def plan_search_queries(
 ) -> QueryPlanResult:
     """
     Generate distinct YouTube search queries based on a chat conversation.
+    When messages include "Required terms in title/description", the model outputs
+    queries with those terms as quoted phrases. For inferring a single required term
+    when the user leaves the field blank, use infer_single_required_term() first,
+    then call this with messages that include that term.
 
     Args:
         messages: Chat messages with roles (user/assistant).
@@ -50,15 +184,46 @@ def plan_search_queries(
 
     system_prompt = (
         "You create distinct YouTube search queries from the user's research intent.\n\n"
+        "QUERY STRATEGY - DOMAIN DECOMPOSITION (CRITICAL):\n"
+        "Think about the topic structurally. What are the major subcategories, subdisciplines, "
+        "or components that make up this domain? Generate queries that cover DIFFERENT ANGLES, "
+        "not synonyms of the same thing.\n\n"
+        "QUERY DISTRIBUTION:\n"
+        "1. BROAD QUERY (1 of N): One longer, comprehensive query that combines multiple related "
+        "keywords to cast a wide net. Example: \"effective successful B2B SaaS marketing "
+        "strategies and techniques 2026\"\n"
+        "2. CATEGORICAL QUERIES (remaining N-1): Each covers a DISTINCT subcategory or subdomain "
+        "of the topic. These should NOT overlap significantly.\n\n"
+        "EXAMPLE - Topic: \"B2B SaaS marketing strategies\"\n"
+        "Think: What are the main pillars of B2B SaaS marketing?\n"
+        "- Demand generation / traffic acquisition\n"
+        "- Lead nurturing / email sequences\n"
+        "- Conversion optimization / sales enablement\n"
+        "- Customer retention / churn reduction\n"
+        "- Content marketing / thought leadership\n\n"
+        "BAD OUTPUT (synonym variation - AVOID):\n"
+        "[\"B2B SaaS marketing strategies 2026\", \"effective B2B SaaS marketing techniques\", "
+        "\"B2B SaaS marketing best practices\", \"successful B2B SaaS marketing methods\"]\n\n"
+        "GOOD OUTPUT (domain decomposition):\n"
+        "[\"comprehensive B2B SaaS marketing strategies techniques and best practices 2026\", "
+        "\"B2B SaaS demand generation and lead acquisition strategies\", "
+        "\"B2B SaaS email nurturing and conversion optimization\", "
+        "\"B2B SaaS customer retention and churn reduction tactics\", "
+        "\"B2B SaaS content marketing thought leadership examples\"]\n\n"
+        "PROCESS:\n"
+        "1. Identify the core domain from the user's intent\n"
+        "2. Break it into 4-6 major subcategories/pillars\n"
+        "3. Create ONE broad query (longer, keyword-rich)\n"
+        "4. Create remaining queries targeting DISTINCT subcategories\n"
+        "5. Ensure minimal overlap between queries\n\n"
         "CRITICAL OUTPUT RULES:\n"
         "1. Your response MUST be ONLY a valid JSON array of strings.\n"
-        "2. No markdown code fences (no ```json or ```).\n"
-        "3. No prose, no explanations, no bullet points.\n"
-        "4. Each string must be a standalone YouTube search query (5-15 words).\n"
-        "5. Start with '[' and end with ']'.\n\n"
-        "EXPECTED OUTPUT STRUCTURE:\n"
-        '["b2b saas demand gen 2026","product-led growth b2b saas case study","saas positioning framework 2025"]\n\n'
-        "ONLY output the JSON structure and nothing else!"
+        "2. No markdown code fences, no prose, no explanations.\n"
+        "3. Each string must be a standalone YouTube search query (5-20 words).\n"
+        "4. Start with '[' and end with ']'.\n\n"
+        "REQUIRED TERMS (when present): Include the user's required terms as quoted phrases, "
+        "varied naturally in position within each query.\n\n"
+        "ONLY output the JSON array and nothing else!"
     )
 
     conversation_lines = []
@@ -117,7 +282,6 @@ def plan_search_queries(
     if validation_error:
         if progress_callback:
             progress_callback(f"Validation failed: {validation_error}. Retrying once...")
-        # Feedback + retry (1x only). Fix root cause, don't mask with retries.
         last_text = response_text
         retry_count = 1
         repair_prompt = (
@@ -130,8 +294,7 @@ def plan_search_queries(
             + "RULES:\n"
             + "- The first character must be '[' and the last character must be ']'.\n"
             + "- No markdown code fences (no ```json or ```).\n"
-            + "- No prose, no explanations, no bullet points.\n"
-            + "- If you cannot comply, return [] (empty JSON array).\n\n"
+            + "- No prose, no explanations, no bullet points.\n\n"
             + "ONLY output the JSON structure and nothing else!"
         )
         try:
@@ -185,13 +348,97 @@ def plan_search_queries(
         if len(cleaned) >= max_queries:
             break
 
+    # Deterministic enforcement: when required terms are present in the conversation,
+    # ensure they appear as quoted phrases in each query string. We can't rely on the
+    # model to always follow quoting instructions.
+    required_terms_from_messages = _extract_required_terms_from_messages(messages)
+    if required_terms_from_messages:
+        cleaned = _ensure_quoted_required_terms(cleaned, required_terms_from_messages)
+
     if not cleaned:
-        return QueryPlanResult([], False, "No valid queries after cleaning", raw_response=response_text, timing_info=timing_info, retry_count=retry_count)
+        return QueryPlanResult(
+            [], False, "No valid queries after cleaning",
+            raw_response=response_text, timing_info=timing_info, retry_count=retry_count,
+        )
 
     if progress_callback:
         progress_callback(f"Success! Generated {len(cleaned)} queries.")
     return QueryPlanResult(cleaned, True, raw_response=response_text, timing_info=timing_info, retry_count=retry_count)
 
+
+def _extract_required_terms_from_messages(messages: List[Dict[str, str]]) -> Optional[str]:
+    """
+    Best-effort extraction of required terms from the chat messages.
+
+    We treat the Step 0 UI string as canonical and embed it into the planner messages
+    as: "Required terms in title/description: ...".
+    """
+    if not messages:
+        return None
+    pattern = re.compile(r"required terms in title/description:\s*(.+)$", re.IGNORECASE)
+    last_match: Optional[str] = None
+    for msg in messages:
+        content = (msg.get("content") or "").strip()
+        if not content:
+            continue
+        m = pattern.search(content)
+        if m:
+            last_match = (m.group(1) or "").strip()
+    return last_match or None
+
+
+def _ensure_quoted_required_terms(queries: List[str], required_terms: str) -> List[str]:
+    """
+    Ensure each comma-separated required term is included as a quoted phrase in each query.
+
+    Strategy (natural placement):
+    - Split by commas into terms.
+    - For each query, check if the term already exists:
+      1. If already quoted, leave as-is
+      2. If present unquoted, wrap it with quotes in-place
+      3. If completely missing, insert at a varied position (not always at start)
+    """
+    if not queries:
+        return queries
+    terms = [t.strip() for t in (required_terms or "").split(",") if t.strip()]
+    if not terms:
+        return queries
+
+    fixed: List[str] = []
+    for idx, q in enumerate(queries):
+        updated = q.strip()
+        for term in terms:
+            quoted = f'"{term}"'
+            lower_updated = updated.lower()
+            lower_term = term.lower()
+            lower_quoted = quoted.lower()
+
+            # Case 1: Already quoted - skip
+            if lower_quoted in lower_updated:
+                continue
+
+            # Case 2: Term exists unquoted - wrap it with quotes in-place
+            if lower_term in lower_updated:
+                # Find the term (case-insensitive) and replace with quoted version
+                pattern = re.compile(re.escape(term), re.IGNORECASE)
+                updated = pattern.sub(quoted, updated, count=1)
+                continue
+
+            # Case 3: Term completely missing - insert at varied position
+            words = updated.split()
+            if len(words) <= 2:
+                # Short query: just prepend
+                updated = quoted + " " + updated
+            else:
+                # Vary insertion point based on query index for distribution
+                # Use modulo to cycle through: start, early-middle, middle, late-middle
+                positions = [0, len(words) // 3, len(words) // 2, (2 * len(words)) // 3]
+                insert_pos = positions[idx % len(positions)]
+                words.insert(insert_pos, quoted)
+                updated = " ".join(words)
+
+        fixed.append(updated)
+    return fixed
 
 def _parse_queries_strict(response_text: str) -> tuple[List[str], Optional[str]]:
     """
